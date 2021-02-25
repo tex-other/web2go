@@ -2,6 +2,14 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:generate rm -f ast.go
+//go:generate yy -o parser.y -token tok -astImport "\"go/token\"" -position -kind Case -noListKind -noPrivateHelpers -forceOptPos parser.yy
+//go:generate rm -f parser.go
+//go:generate goyacc -o /dev/null -xegen xegen parser.y
+//go:generate goyacc -o parser.go -pool -fs -xe xegen -dlvalf "%v" -dlval "prettyString(&lval.tok)" parser.y
+//go:generate rm -f xegen
+//go:generate sh -c "go test -run ^Example |fe"
+
 // Command web2go is an attempt to mechanically translate tex.web to Go. (Work
 // in progress.)
 //
@@ -91,4 +99,170 @@
 // installed.
 package main // import "modernc.org/web2go"
 
-func main() {}
+import (
+	"flag"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"strings"
+)
+
+func fatalf(s string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
+	fmt.Fprintln(os.Stderr, strings.TrimSpace(fmt.Sprintf(s, args...)))
+	os.Exit(1)
+}
+
+func fatal(args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
+	fmt.Fprintln(os.Stderr, strings.TrimSpace(fmt.Sprint(args...)))
+	os.Exit(1)
+}
+
+func origin(skip int) string {
+	pc, fn, fl, _ := runtime.Caller(skip)
+	fn = filepath.Base(fn)
+	f := runtime.FuncForPC(pc)
+	var fns string
+	if f != nil {
+		fns = f.Name()
+		if x := strings.LastIndex(fns, "."); x > 0 {
+			fns = fns[x+1:]
+		}
+	}
+	return fmt.Sprintf("%s:%d:%s", fn, fl, fns)
+}
+
+func todo(s string, args ...interface{}) string { //TODO-
+	switch {
+	case s == "":
+		s = fmt.Sprintf(strings.Repeat("%v ", len(args)), args...)
+	default:
+		s = fmt.Sprintf(s, args...)
+	}
+	pc, fn, fl, _ := runtime.Caller(1)
+	f := runtime.FuncForPC(pc)
+	var fns string
+	if f != nil {
+		fns = f.Name()
+		if x := strings.LastIndex(fns, "."); x > 0 {
+			fns = fns[x+1:]
+		}
+	}
+	r := fmt.Sprintf("%s:%d:%s: TODOTODO %s", fn, fl, fns, s) //TODOOK
+	fmt.Fprintf(os.Stdout, "%s\n", r)
+	os.Stdout.Sync()
+	return r
+}
+
+func trc(s string, args ...interface{}) string { //TODO-
+	switch {
+	case s == "":
+		s = fmt.Sprintf(strings.Repeat("%v ", len(args)), args...)
+	default:
+		s = fmt.Sprintf(s, args...)
+	}
+	_, fn, fl, _ := runtime.Caller(1)
+	r := fmt.Sprintf("%s:%d: TRC %s", fn, fl, s)
+	fmt.Fprintf(os.Stdout, "%s\n", r)
+	os.Stdout.Sync()
+	return r
+}
+
+func main() {
+	task := newTask(os.Args)
+	flag.BoolVar(&task.ptop, "ptop", false, "format .p to .pas")
+	flag.StringVar(&task.o, "o", "", ".go output file")
+	flag.StringVar(&task.p, "p", "", ".p output file")
+	flag.StringVar(&task.pas, "pas", "", ".pas output file")
+	flag.Parse()
+	if flag.NArg() == 0 {
+		fatal("missing input file argument")
+	}
+
+	if flag.NArg() > 1 {
+		fatal("only one input file expected")
+	}
+
+	task.in = flag.Arg(0)
+	if err := task.main(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+type task struct {
+	args    []string
+	cleanup []func()
+	in      string
+	o       string
+	p       string
+	pas     string
+	tempDir string
+
+	ptop bool
+}
+
+func newTask(args []string) *task {
+	return &task{
+		args: args,
+	}
+}
+
+func (t *task) main() error {
+	defer func() {
+		for _, v := range t.cleanup {
+			v()
+		}
+	}()
+
+	if t.tempDir == "" {
+		tempDir, err := ioutil.TempDir("", "web2go-")
+		if err != nil {
+			return err
+		}
+
+		t.tempDir = tempDir
+		t.cleanup = append(t.cleanup, func() { os.RemoveAll(t.tempDir) })
+	}
+
+	panic(todo(""))
+}
+
+func (t *task) web2p() ([]byte, error) {
+	const bin = "tangle"
+	tangle, err := exec.LookPath(bin)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := ioutil.ReadFile(t.in)
+	if err != nil {
+		return nil, err
+	}
+
+	f := filepath.Join(t.tempDir, t.in)
+	if err := ioutil.WriteFile(f, b, 0660); err != nil {
+		return nil, err
+	}
+
+	if b, err = exec.Command(tangle, t.in).CombinedOutput(); err != nil {
+		return b, err
+	}
+
+	switch p := t.in[:len(t.in)-len(".web")] + ".p"; {
+	case t.p == "":
+		t.p = p
+		t.cleanup = append(t.cleanup, func() { os.Remove(p) })
+	default:
+		if err := os.Rename(p, t.p); err != nil {
+			return b, err
+		}
+	}
+
+	return b, nil
+}

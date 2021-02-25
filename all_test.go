@@ -57,11 +57,6 @@ func init() {
 }
 
 // ----------------------------------------------------------------------------
-
-func exampleAST(rule int, src string) interface{} {
-	return fmt.Sprintf("TODO %v %q", rule, src)
-}
-
 var tempDir string
 
 func TestMain(m *testing.M) {
@@ -95,14 +90,14 @@ func TestScanner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := newScanner(b, "tex.p")
+	l, err := newLexer(b, "tex.p")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var toks int
 	for {
-		tok := s.scan()
+		tok := l.scan()
 		if tok.rune < 0 {
 			break
 		}

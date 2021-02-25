@@ -2,14 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:generate rm -f ast.go
-//go:generate yy -o parser.y -token tok -astImport "\"go/token\"" -position -kind Case -noListKind -noPrivateHelpers -forceOptPos parser.yy
-//go:generate rm -f parser.go
-//go:generate goyacc -o /dev/null -xegen xegen parser.y
-//go:generate goyacc -o parser.go -pool -fs -xe xegen -dlvalf "%v" -dlval "prettyString(&lval.tok)" parser.y
-//go:generate rm -f xegen
-//go:generate sh -c "go test -run ^Example |fe"
-
 // Command web2go is an attempt to mechanically translate tex.web to Go. (Work
 // in progress.)
 //
@@ -97,6 +89,13 @@
 // If the input-file is .web or .p, format the .p file using ptop to produce a
 // .pas file that will be the input of the transpiler.  Requires ptop to be
 // installed.
+//
+// References
+//
+// Referenced to from elsewhere:
+//
+//	[0]: Kathleen Jensen, Niklaus Wirth: Pascal User Manual and Report, Fourth Edition.
+//		ISBN-13: 978-0-387-97649-5 e-ISBN: 978-1-4612-4450-9
 package main // import "modernc.org/web2go"
 
 import (

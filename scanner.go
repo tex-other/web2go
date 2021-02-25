@@ -11,40 +11,91 @@ import (
 	"strings"
 )
 
+const (
+	_ = iota
+	AND
+	ARRAY
+	BEGIN
+	CASE
+	CONST
+	DIV
+	DO
+	DOWNTO
+	ELSE
+	END
+	FILE
+	FOR
+	FUNCTION
+	GOTO
+	IF
+	IN
+	LABEL
+	MOD
+	NIL
+	NOT
+	OF
+	OR
+	PACKED
+	PROCEDURE
+	PROGRAM
+	RECORD
+	REPEAT
+	SET
+	THEN
+	TO
+	TYPE
+	UNTIL
+	VAR
+	WHILE
+	WITH
+	IDENTIFIER
+	INT_LITERAL
+	ASSIGN
+	REAL_LITERAL
+	STR_LITERAL
+	DD
+	LE
+	GE
+	SEP
+)
+
 var keywords = map[string]rune{
+
 	"and":       AND,
 	"array":     ARRAY,
 	"begin":     BEGIN,
-	"boolean":   BOOLEAN,
 	"case":      CASE,
 	"const":     CONST,
 	"div":       DIV,
 	"do":        DO,
+	"downto":    DOWNTO,
 	"else":      ELSE,
 	"end":       END,
-	"false":     FALSE,
 	"file":      FILE,
 	"for":       FOR,
-	"forward":   FORWARD,
 	"function":  FUNCTION,
 	"goto":      GOTO,
 	"if":        IF,
-	"integer":   INTEGER,
+	"in":        IN,
 	"label":     LABEL,
+	"mod":       MOD,
+	"nil":       NIL,
 	"not":       NOT,
 	"of":        OF,
 	"or":        OR,
 	"packed":    PACKED,
 	"procedure": PROCEDURE,
 	"program":   PROGRAM,
-	"real":      REAL,
 	"record":    RECORD,
 	"repeat":    REPEAT,
+	"set":       SET,
 	"then":      THEN,
 	"to":        TO,
-	"true":      TRUE,
+	"type":      TYPE,
+	"until":     UNTIL,
 	"var":       VAR,
 	"while":     WHILE,
+	"with":      WITH,
 }
 
 type node interface {
@@ -63,24 +114,17 @@ func (t *tok) Position() token.Position {
 	return t.file.Position(t.pos)
 }
 
-func (t *tok) str() string {
-	return fmt.Sprintf("%v: %q %q %s", t.Position(), t.sep, t.src, yySymName(int(t.rune)))
-}
-
-func prettyString(n node) string {
-	panic(todo(""))
-}
-
-type scanner struct {
-	errs []error
+type lexer struct {
+	errs []string
 	file *token.File
+	last *tok
 	pos  token.Pos
 	s    string
 	sep  string
 	si   int // current index into b
 }
 
-func newScanner(b []byte, name string) (*scanner, error) {
+func newLexer(b []byte, name string) (*lexer, error) {
 	if x := bytes.IndexByte(b, 0); x >= 0 {
 		return nil, fmt.Errorf("input file contains a zero byte at offset %#x", x)
 	}
@@ -88,51 +132,53 @@ func newScanner(b []byte, name string) (*scanner, error) {
 	fs := token.NewFileSet()
 	file := fs.AddFile(name, -1, len(b))
 	b = append(b, 0) // Set the sentinel.
-	return &scanner{
+	return &lexer{
 		s:    string(b),
 		file: file,
 		pos:  file.Pos(0),
 	}, nil
 }
 
-func (s *scanner) c() byte { return s.s[s.si] }
+func (l *lexer) c() byte { return l.s[l.si] }
 
-func (s *scanner) post() byte {
-	r := s.s[s.si]
+func (l *lexer) post() byte {
+	r := l.s[l.si]
 	if r != 0 {
-		s.si++
+		l.si++
 	}
 	return r
 }
 
-func (s *scanner) pre() byte {
-	if s.s[s.si] != 0 {
-		s.si++
+func (l *lexer) pre() byte {
+	if l.s[l.si] != 0 {
+		l.si++
 	}
-	return s.s[s.si]
+	return l.s[l.si]
 }
 
-func (s *scanner) position() token.Position {
-	return s.file.Position(s.pos)
+func (l *lexer) position() token.Position {
+	return l.file.Position(l.pos)
 }
 
-func (s *scanner) err(msg string, args ...interface{}) {
-	p := fmt.Sprintf("%v: ", s.position())
-	s.errs = append(s.errs, fmt.Errorf(p+msg, args...))
+func (l *lexer) err(msg string, args ...interface{}) {
+	p := fmt.Sprintf("%v: ", l.position())
+	l.errs = append(l.errs, fmt.Sprintf(p+msg, args...))
 }
 
-func (s *scanner) scan() (r *tok) {
-	si0 := s.si
+// [0] 0.1
+func (l *lexer) scan() (r *tok) {
+	si0 := l.si
 	defer func() {
 		if r == nil {
 			return
 		}
 
-		r.file = s.file
-		r.pos = s.pos
-		r.sep = s.sep
-		r.src = s.s[si0:s.si]
-		s.sep = ""
+		r.file = l.file
+		r.pos = l.pos
+		r.sep = l.sep
+		r.src = l.s[si0:l.si]
+		l.last = r
+		l.sep = ""
 		if r.rune == IDENTIFIER {
 			if x, ok := keywords[strings.ToLower(r.src)]; ok {
 				r.rune = x
@@ -140,32 +186,32 @@ func (s *scanner) scan() (r *tok) {
 		}
 	}()
 more:
-	si0 = s.si
-	s.pos = s.file.Pos(si0)
-	c := s.c()
+	si0 = l.si
+	l.pos = l.file.Pos(si0)
+	c := l.c()
 	switch {
-	case s.isSep(c):
-		for s.isSep(s.pre()) {
+	case l.isSep(c):
+		for l.isSep(l.pre()) {
 		}
-		s.sep = s.s[si0:s.si]
+		l.sep = l.s[si0:l.si]
 		goto more
 	case isIdFirst(c):
-		for isIdNext(s.pre()) {
+		for isIdNext(l.pre()) {
 		}
 		return &tok{rune: IDENTIFIER}
 	case isDigit(c):
 		for {
-			switch c := s.pre(); {
+			switch c := l.pre(); {
 			case isDigit(c):
 				// ok
 			case c == '.':
-				if s.pre() == '.' {
-					s.si--
+				if l.pre() == '.' {
+					l.si--
 					return &tok{rune: INT_LITERAL}
 				}
 
 				for {
-					c = s.pre()
+					c = l.pre()
 					if isDigit(c) {
 						continue
 					}
@@ -186,65 +232,65 @@ more:
 
 	switch c {
 	case ';', ',', '=', '(', ')', '+', '-', '*', '/', '[', ']', '^':
-		s.post()
+		l.post()
 		return &tok{rune: rune(c)}
 	case ':':
-		if s.pre() == '=' {
-			s.post()
+		if l.pre() == '=' {
+			l.post()
 			return &tok{rune: ASSIGN}
 		}
 
 		return &tok{rune: rune(c)}
 	case '\'':
 		for {
-			switch s.pre() {
+			switch l.pre() {
 			case '\'':
-				s.post()
+				l.post()
 				return &tok{rune: STR_LITERAL}
 			case 0:
-				s.err("unterminated comment")
+				l.err("unterminated comment")
 				return &tok{rune: -1}
 			}
 		}
 	case '.':
-		if s.pre() == '.' {
-			s.post()
+		if l.pre() == '.' {
+			l.post()
 			return &tok{rune: DD}
 		}
 
 		return &tok{rune: rune(c)}
 	case '<':
-		if s.pre() == '=' {
-			s.post()
+		if l.pre() == '=' {
+			l.post()
 			return &tok{rune: LE}
 		}
 
 		return &tok{rune: rune(c)}
 	case '>':
-		if s.pre() == '=' {
-			s.post()
+		if l.pre() == '=' {
+			l.post()
 			return &tok{rune: GE}
 		}
 
 		return &tok{rune: rune(c)}
 	case '{':
 		for {
-			switch s.pre() {
+			switch l.pre() {
 			case '\n':
-				s.file.AddLine(s.si + 1)
+				l.file.AddLine(l.si + 1)
 			case '}':
-				s.post()
+				l.post()
 				return &tok{rune: SEP}
 			case 0:
-				s.err("unterminated comment")
+				l.err("unterminated comment")
 				return &tok{rune: -1}
 			}
 		}
 	case 0:
-		s.pos--
+		l.pos--
 		return &tok{rune: -1}
 	default:
-		panic(todo("%v: %#+U", s.position(), s.c()))
+		panic(todo("%v: %#+U", l.position(), l.c()))
 	}
 }
 
@@ -252,10 +298,10 @@ func isDigit(c byte) bool   { return c >= '0' && c <= '9' }
 func isIdFirst(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
 func isIdNext(c byte) bool  { return isIdFirst(c) || c >= '0' && c <= '9' }
 
-func (s *scanner) isSep(c byte) bool {
+func (l *lexer) isSep(c byte) bool {
 	switch c {
 	case '\n':
-		s.file.AddLine(s.si + 1)
+		l.file.AddLine(l.si + 1)
 		fallthrough
 	case ' ':
 		return true

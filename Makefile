@@ -32,10 +32,10 @@ edit:
 	@touch log
 	@if [ -f "Session.vim" ]; then gvim -S & else gvim -p Makefile parser.yy *.go & fi
 
-editor: ast.go
+editor:
 	gofmt -l -s -w *.go
-	GO111MODULE=off nilness . ./... 2>&1 | tee log-install
-	GO111MODULE=off go install -v ./... 2>&1 | tee -a log-install
+	GO111MODULE=off nilness . ./... 2>&1 | tee log
+	GO111MODULE=off go install -v ./... 2>&1 | tee -a log
 	@gofmt -l -s -w .
 
 later:
@@ -52,6 +52,3 @@ todo:
 	@grep -nr $(grep) [^[:alpha:]]println * | grep -v $(ngrep) || true
 	@grep -nir $(grep) 'work.*progress' || true
 
-
-ast.go: parser.yy
-	go generate 2>&1 | tee log-generate

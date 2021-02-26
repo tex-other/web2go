@@ -122,7 +122,7 @@ func (t *tok) Position() token.Position {
 }
 
 func (t *tok) String() string {
-	return fmt.Sprintf("%v: %q %q %s", t.Position(), t.sep, t.src, t.char.str())
+	return fmt.Sprintf("%v: %q %s", t.Position(), t.src, t.char.str())
 }
 
 type scanner struct {
@@ -187,7 +187,9 @@ func (s *scanner) position() token.Position {
 
 func (s *scanner) err(msg string, args ...interface{}) {
 	p := fmt.Sprintf("%v: ", s.position())
-	s.errs = append(s.errs, fmt.Sprintf(p+msg, args...))
+	msg = fmt.Sprintf(p+msg, args...)
+	trc("scanner err: %v", msg)
+	s.errs = append(s.errs, msg)
 }
 
 // [0] 0.1

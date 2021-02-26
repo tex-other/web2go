@@ -29,8 +29,8 @@ func parse(b []byte, name string) (*program, error) {
 
 type parser struct {
 	*scanner
-	buf *tok
-	tok *tok
+	tok      *tok // current token, nil initially and if consumed by shift()
+	ungetBuf *tok
 
 	debug          bool
 	overflowCheck  bool
@@ -49,11 +49,11 @@ func newParser(b []byte, name string) (*parser, error) {
 
 func (p *parser) err(n node, msg string, args ...interface{}) {
 	pos := fmt.Sprintf("%v: ", n.Position())
-	p.errs = append(p.errs, fmt.Sprintf(pos+msg, args...))
+	msg = fmt.Sprintf(pos+msg, args...)
+	p.errs = append(p.errs, msg)
 }
 
 func (p *parser) c() (r *tok) {
-	// defer func() { trc("%v: %v", r.Position(), r) }()
 	for {
 		tok := p.c0()
 		if tok.char != SEP {
@@ -62,7 +62,7 @@ func (p *parser) c() (r *tok) {
 
 		if strings.HasPrefix(tok.src, "{$") {
 			if p.seenDirectives {
-				p.err(tok, "multiple directives not handled")
+				p.err(tok, "multiple directive instances not supported")
 			}
 			p.directives(tok)
 			p.seenDirectives = true
@@ -74,7 +74,7 @@ func (p *parser) c() (r *tok) {
 
 func (p *parser) directives(tok *tok) {
 	if !strings.HasPrefix(tok.src, "{$") || !strings.HasSuffix(tok.src, "}") {
-		p.err(tok, "invalid drictiver format: %s", tok.src)
+		p.err(tok, "invalid directive format: %s", tok.src)
 		return
 	}
 
@@ -99,17 +99,66 @@ func (p *parser) directives(tok *tok) {
 	}
 }
 
-func (p *parser) c0() *tok {
-	if p.buf != nil {
-		p.tok = p.buf
-		p.buf = nil
+// 	tok		ungetBuf	action
+//	---		--------	------
+//	nil		nil		p.tok = p.scan(); return p.tok
+//	nil		non-nil		return p.ungetBuf
+//	non-nil		nil		return p.tok
+//	non-nil		non-nil		return p.ungetBuf
+func (p *parser) c0() (r *tok) {
+	if p.ungetBuf != nil {
+		return p.ungetBuf
+	}
+
+	if p.tok != nil {
 		return p.tok
 	}
 
-	if p.tok == nil {
-		p.tok = p.scan()
-	}
+	p.tok = p.scan()
 	return p.tok
+}
+
+// 	tok		ungetBuf	action
+//	---		--------	------
+//	nil		nil		internal error
+//	nil		non-nil		r = p.ungetBuf; p.ungetBuf = nil; return r
+//	non-nil		nil		r = p.tok; p.tok = nil; return r
+//	non-nil		non-nil		r = p.ungetBuf; p.ungetBuf = nil; return r
+func (p *parser) shift() (r *tok) {
+	if p.ungetBuf != nil {
+		r = p.ungetBuf
+		p.ungetBuf = nil
+		return r
+	}
+
+	if p.tok != nil {
+		r = p.tok
+		p.tok = nil
+		return r
+	}
+
+	panic(todo("internal error"))
+}
+
+// 	tok		ungetBuf	action
+//	---		--------	------
+//	nil		nil		p.ungetBuf = tok
+//	nil		non-nil		p.tok = p.ungetBuf; p.ungetBuf = tok
+//	non-nil		nil		p.ungetBuf = tok
+//	non-nil		non-nil		internal error
+func (p *parser) unget(tok *tok) {
+	if p.ungetBuf == nil {
+		p.ungetBuf = tok
+		return
+	}
+
+	if p.tok == nil {
+		p.tok = p.ungetBuf
+		p.ungetBuf = tok
+		return
+	}
+
+	panic(todo("internal error"))
 }
 
 func (p *parser) must(ch char) (tok *tok) {
@@ -125,25 +174,6 @@ func (p *parser) mustShift(ch char) *tok {
 	tok := p.must(ch)
 	p.shift()
 	return tok
-}
-
-func (p *parser) shift() *tok {
-	if p.buf != nil {
-		panic(todo(""))
-	}
-
-	p.tok = nil
-	return p.c()
-}
-
-// foo ; case
-func (p *parser) unget(tok *tok) {
-	if p.buf != nil {
-		panic(todo(""))
-	}
-
-	p.buf = p.tok
-	p.tok = tok
 }
 
 // Program = ProgramHeading ";" Block "." .
@@ -183,7 +213,7 @@ type programParameterList struct{}
 // ProgramParameterList = "(" IdentifierList ")" .
 func (p *parser) programParameterList() *programParameterList {
 	if p.c().char == '(' {
-		p.err(p.c(), "ProgramParameterList not handled")
+		p.err(p.c(), "ProgramParameterList not supported")
 	}
 	return nil
 }
@@ -193,6 +223,8 @@ type block struct {
 	*constantDefinitionPart
 	*typeDefinitionPart
 	*variableDeclarationPart
+	list []*procedureAndFunctionDeclarationPart
+	*compoundStatement
 }
 
 // Block = LabelDeclarationPart
@@ -207,7 +239,98 @@ func (p *parser) block() *block {
 		p.constantDefinitionPart(),
 		p.typeDefinitionPart(),
 		p.variableDeclarationPart(),
+		p.procedureAndFunctionDeclarationPart(),
+		p.compoundStatement(),
 	}
+}
+
+// CompoundStatement = "begin" StatementSequence "end" .
+type compoundStatement struct {
+	begin *tok
+	list  []*statement
+	end   *tok
+}
+
+func (p *parser) compoundStatement() *compoundStatement {
+	return &compoundStatement{
+		p.mustShift(BEGIN),
+		p.statementList(),
+		p.mustShift(END),
+	}
+}
+
+func (p *parser) statementList() (r []*statement) {
+	panic(todo("", p.c()))
+}
+
+type statement struct{}
+
+func (p *parser) statment() *statement {
+	panic(todo("", p.c()))
+}
+
+// ProcedureAndFunctionDeclarationPart = { (ProcedureDeclaration | FunctionDeclaration ) ";" } .
+type procedureAndFunctionDeclarationPart struct {
+	*procedureDeclaration
+}
+
+func (p *parser) procedureAndFunctionDeclarationPart() (r []*procedureAndFunctionDeclarationPart) {
+	for {
+		switch p.c().char {
+		case PROCEDURE:
+			r = append(r, &procedureAndFunctionDeclarationPart{procedureDeclaration: p.procedureDeclaration()})
+		case FUNCTION:
+			panic(todo("", p.c()))
+		default:
+			return r
+		}
+	}
+}
+
+// ProcedureDeclaration = ProcedureHeading ";" Block |
+//	ProcedureHeading ";" Directive |
+//	ProcedureIdentification ";" Block.
+type procedureDeclaration struct {
+	*procedureHeading
+	semi *tok
+	*block
+}
+
+func (p *parser) procedureDeclaration() *procedureDeclaration {
+	return &procedureDeclaration{
+		p.procedureHeading(),
+		p.mustShift(';'),
+		p.block(),
+	}
+}
+
+// ProcedureHeading = "procedure" Identifier [ FormaIParameterList ] .
+type procedureHeading struct {
+	procedure *tok
+	ident     *tok
+	list      []*formalParameterSection
+}
+
+func (p *parser) procedureHeading() *procedureHeading {
+	return &procedureHeading{
+		p.mustShift(PROCEDURE),
+		p.mustShift(IDENTIFIER),
+		p.formalParameterList(),
+	}
+}
+
+func (p *parser) formalParameterList() (r []*formalParameterSection) {
+	if p.c().char != '(' {
+		return nil
+	}
+
+	panic(todo("", p.c()))
+}
+
+type formalParameterSection struct{}
+
+func (p *parser) formalParameterSection() *formalParameterSection {
+	panic(todo("", p.c()))
 }
 
 // VariableDeclarationPart = [ "var" VariableDeclaration ";" { VariableDeclaration ";" } ] .
@@ -402,13 +525,27 @@ func (p *parser) fieldList() *fieldList {
 	switch p.c().char {
 	case IDENTIFIER:
 		r := &fieldList{fixedPart: p.fixedPart()}
-		if p.c().char == CASE {
-			r.variantPart = p.variantPart()
-		}
-		if p.c().char == ';' {
+		switch p.c().char {
+		case ';':
 			p.shift()
+			switch p.c().char {
+			case CASE:
+				r.variantPart = p.variantPart()
+				if p.c().char == ';' {
+					p.shift()
+				}
+				return r
+			case END:
+				return r
+			default:
+				_ = r
+				panic(todo("", p.c()))
+			}
+		case ')':
+			return r
+		default:
+			panic(todo("", p.c()))
 		}
-		return r
 	case CASE:
 		r := &fieldList{variantPart: p.variantPart()}
 		if p.c().char == ';' {
@@ -592,10 +729,7 @@ func (p *parser) simpleType() *simpleType {
 			return &simpleType{ident: id}
 		}
 
-		trc("", p.c())
 		p.unget(id)
-		trc("", p.c())
-		panic(todo(""))
 		return &simpleType{ordinalType: p.ordinalType()}
 	default:
 		p.err(p.c(), "unexpected %q, expected ordinal type or real type identifier", p.c().src)
@@ -615,7 +749,6 @@ func (p *parser) ordinalType() *ordinalType {
 	case INT_LITERAL, '-':
 		return &ordinalType{subrangeType: p.subrangeType()}
 	case IDENTIFIER:
-		panic(todo("", p.c()))
 		id := p.shift()
 		if p.c().char != DD {
 			return &ordinalType{ident: id}

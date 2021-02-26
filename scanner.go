@@ -5,62 +5,69 @@
 package main // import "modernc.org/web2go"
 
 import (
-	"bytes"
 	"fmt"
 	"go/token"
 	"strings"
 )
 
+type char rune
+
+func (l char) str() string {
+	if l < AND || l > WITH {
+		return fmt.Sprintf("%#U", l)
+	}
+
+	return l.String()
+}
+
 const (
-	_ = iota
-	AND
-	ARRAY
-	BEGIN
-	CASE
-	CONST
-	DIV
-	DO
-	DOWNTO
-	ELSE
-	END
-	FILE
-	FOR
-	FUNCTION
-	GOTO
-	IF
-	IN
-	LABEL
-	MOD
-	NIL
-	NOT
-	OF
-	OR
-	PACKED
-	PROCEDURE
-	PROGRAM
-	RECORD
-	REPEAT
-	SET
-	THEN
-	TO
-	TYPE
-	UNTIL
-	VAR
-	WHILE
-	WITH
-	IDENTIFIER
-	INT_LITERAL
-	ASSIGN
-	REAL_LITERAL
-	STR_LITERAL
-	DD
-	LE
-	GE
-	SEP
+	AND          char = iota + 0xe000 // and
+	ARRAY                             // array
+	ASSIGN                            // assign
+	BEGIN                             // begin
+	CASE                              // case
+	CONST                             // const
+	DD                                // ..
+	DIV                               // div
+	DO                                // do
+	DOWNTO                            // downto
+	ELSE                              // else
+	END                               // end
+	FILE                              // file
+	FOR                               // for
+	FUNCTION                          // function
+	GE                                // >=
+	GOTO                              // goto
+	IDENTIFIER                        // identifier
+	IF                                // if
+	IN                                // in
+	INT_LITERAL                       // integer literal
+	LABEL                             // label
+	LE                                // <=
+	MOD                               // mod
+	NIL                               // nil
+	NOT                               // not
+	OF                                // of
+	OR                                // or
+	PACKED                            // packed
+	PROCEDURE                         // procedure
+	PROGRAM                           // program
+	REAL_LITERAL                      // real literal
+	RECORD                            // record
+	REPEAT                            // repeat
+	SEP                               // separator
+	SET                               // set
+	STR_LITERAL                       // string literal
+	THEN                              // then
+	TO                                // to
+	TYPE                              // type
+	UNTIL                             // until
+	VAR                               // var
+	WHILE                             // while
+	WITH                              // with
 )
 
-var keywords = map[string]rune{
-
+var keywords = map[string]char{
 	"and":       AND,
 	"array":     ARRAY,
 	"begin":     BEGIN,
@@ -103,9 +110,9 @@ type node interface {
 }
 
 type tok struct {
+	char char
 	file *token.File
 	pos  token.Pos
-	rune rune
 	sep  string
 	src  string
 }
@@ -114,7 +121,11 @@ func (t *tok) Position() token.Position {
 	return t.file.Position(t.pos)
 }
 
-type lexer struct {
+func (t *tok) String() string {
+	return fmt.Sprintf("%v: %q %q %s", t.Position(), t.sep, t.src, t.char.str())
+}
+
+type scanner struct {
 	errs []string
 	file *token.File
 	last *tok
@@ -124,94 +135,108 @@ type lexer struct {
 	si   int // current index into b
 }
 
-func newLexer(b []byte, name string) (*lexer, error) {
-	if x := bytes.IndexByte(b, 0); x >= 0 {
-		return nil, fmt.Errorf("input file contains a zero byte at offset %#x", x)
+func newScanner(b []byte, name string) (*scanner, error) {
+	for i, v := range b {
+		if v == 0 {
+			return nil, fmt.Errorf("input file contains a zero byte at offset %#x", i)
+		}
+
+		if v > 127 {
+			return nil, fmt.Errorf("input file contains a non-ASCII byte at offset %#x", i)
+		}
 	}
 
 	fs := token.NewFileSet()
 	file := fs.AddFile(name, -1, len(b))
 	b = append(b, 0) // Set the sentinel.
-	return &lexer{
+	return &scanner{
 		s:    string(b),
 		file: file,
 		pos:  file.Pos(0),
 	}, nil
 }
 
-func (l *lexer) c() byte { return l.s[l.si] }
+func (s *scanner) errList() error {
+	if len(s.errs) == 0 {
+		return nil
+	}
 
-func (l *lexer) post() byte {
-	r := l.s[l.si]
+	return fmt.Errorf("%s", strings.Join(s.errs, "\n"))
+}
+
+func (s *scanner) c() char { return char(s.s[s.si]) }
+
+func (s *scanner) post() char {
+	r := s.s[s.si]
 	if r != 0 {
-		l.si++
+		s.si++
 	}
-	return r
+	return char(r)
 }
 
-func (l *lexer) pre() byte {
-	if l.s[l.si] != 0 {
-		l.si++
+func (s *scanner) pre() char {
+	if s.s[s.si] != 0 {
+		s.si++
 	}
-	return l.s[l.si]
+	return char(s.s[s.si])
 }
 
-func (l *lexer) position() token.Position {
-	return l.file.Position(l.pos)
+func (s *scanner) position() token.Position {
+	return s.file.Position(s.pos)
 }
 
-func (l *lexer) err(msg string, args ...interface{}) {
-	p := fmt.Sprintf("%v: ", l.position())
-	l.errs = append(l.errs, fmt.Sprintf(p+msg, args...))
+func (s *scanner) err(msg string, args ...interface{}) {
+	p := fmt.Sprintf("%v: ", s.position())
+	s.errs = append(s.errs, fmt.Sprintf(p+msg, args...))
 }
 
 // [0] 0.1
-func (l *lexer) scan() (r *tok) {
-	si0 := l.si
+func (s *scanner) scan() (r *tok) {
+	si0 := s.si
 	defer func() {
 		if r == nil {
 			return
 		}
 
-		r.file = l.file
-		r.pos = l.pos
-		r.sep = l.sep
-		r.src = l.s[si0:l.si]
-		l.last = r
-		l.sep = ""
-		if r.rune == IDENTIFIER {
+		r.file = s.file
+		r.pos = s.pos
+		r.sep = s.sep
+		r.src = s.s[si0:s.si]
+		s.last = r
+		s.sep = ""
+		if r.char == IDENTIFIER {
 			if x, ok := keywords[strings.ToLower(r.src)]; ok {
-				r.rune = x
+				r.char = x
 			}
 		}
 	}()
 more:
-	si0 = l.si
-	l.pos = l.file.Pos(si0)
-	c := l.c()
+	si0 = s.si
+	s.pos = s.file.Pos(si0)
+	c := s.c()
 	switch {
-	case l.isSep(c):
-		for l.isSep(l.pre()) {
+	case s.isSep(c):
+		for s.isSep(s.pre()) {
 		}
-		l.sep = l.s[si0:l.si]
+		s.sep = s.s[si0:s.si]
 		goto more
-	case isIdFirst(c):
-		for isIdNext(l.pre()) {
+	case isIDFirst(c):
+		for isIDNext(s.pre()) {
 		}
-		return &tok{rune: IDENTIFIER}
+		return &tok{char: IDENTIFIER}
 	case isDigit(c):
 		for {
-			switch c := l.pre(); {
+			switch c := s.pre(); {
 			case isDigit(c):
 				// ok
 			case c == '.':
-				if l.pre() == '.' {
-					l.si--
-					return &tok{rune: INT_LITERAL}
+				if s.pre() == '.' {
+					s.si--
+					return &tok{char: INT_LITERAL}
 				}
 
 				for {
-					c = l.pre()
+					c = s.pre()
 					if isDigit(c) {
 						continue
 					}
@@ -220,88 +245,88 @@ more:
 					case 'e', 'E':
 						panic(todo("%#+U", c))
 					default:
-						return &tok{rune: REAL_LITERAL}
+						return &tok{char: REAL_LITERAL}
 					}
 
 				}
 			default:
-				return &tok{rune: INT_LITERAL}
+				return &tok{char: INT_LITERAL}
 			}
 		}
 	}
 
 	switch c {
 	case ';', ',', '=', '(', ')', '+', '-', '*', '/', '[', ']', '^':
-		l.post()
-		return &tok{rune: rune(c)}
+		s.post()
+		return &tok{char: c}
 	case ':':
-		if l.pre() == '=' {
-			l.post()
-			return &tok{rune: ASSIGN}
+		if s.pre() == '=' {
+			s.post()
+			return &tok{char: ASSIGN}
 		}
 
-		return &tok{rune: rune(c)}
+		return &tok{char: c}
 	case '\'':
 		for {
-			switch l.pre() {
+			switch s.pre() {
 			case '\'':
-				l.post()
-				return &tok{rune: STR_LITERAL}
+				s.post()
+				return &tok{char: STR_LITERAL}
 			case 0:
-				l.err("unterminated comment")
-				return &tok{rune: -1}
+				s.err("unterminated comment")
+				return &tok{char: -1}
 			}
 		}
 	case '.':
-		if l.pre() == '.' {
-			l.post()
-			return &tok{rune: DD}
+		if s.pre() == '.' {
+			s.post()
+			return &tok{char: DD}
 		}
 
-		return &tok{rune: rune(c)}
+		return &tok{char: c}
 	case '<':
-		if l.pre() == '=' {
-			l.post()
-			return &tok{rune: LE}
+		if s.pre() == '=' {
+			s.post()
+			return &tok{char: LE}
 		}
 
-		return &tok{rune: rune(c)}
+		return &tok{char: c}
 	case '>':
-		if l.pre() == '=' {
-			l.post()
-			return &tok{rune: GE}
+		if s.pre() == '=' {
+			s.post()
+			return &tok{char: GE}
 		}
 
-		return &tok{rune: rune(c)}
+		return &tok{char: c}
 	case '{':
 		for {
-			switch l.pre() {
+			switch s.pre() {
 			case '\n':
-				l.file.AddLine(l.si + 1)
+				s.file.AddLine(s.si + 1)
 			case '}':
-				l.post()
-				return &tok{rune: SEP}
+				s.post()
+				return &tok{char: SEP}
 			case 0:
-				l.err("unterminated comment")
-				return &tok{rune: -1}
+				s.err("unterminated comment")
+				return &tok{char: -1}
 			}
 		}
 	case 0:
-		l.pos--
-		return &tok{rune: -1}
+		s.pos--
+		return &tok{char: -1}
 	default:
-		panic(todo("%v: %#+U", l.position(), l.c()))
+		panic(todo("%v: %#+U", s.position(), s.c()))
 	}
 }
 
-func isDigit(c byte) bool   { return c >= '0' && c <= '9' }
-func isIdFirst(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
-func isIdNext(c byte) bool  { return isIdFirst(c) || c >= '0' && c <= '9' }
+func isDigit(c char) bool   { return c >= '0' && c <= '9' }
+func isIDFirst(c char) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
+func isIDNext(c char) bool  { return isIDFirst(c) || c >= '0' && c <= '9' }
 
-func (l *lexer) isSep(c byte) bool {
+func (s *scanner) isSep(c char) bool {
 	switch c {
 	case '\n':
-		l.file.AddLine(l.si + 1)
+		s.file.AddLine(s.si + 1)
 		fallthrough
 	case ' ':
 		return true

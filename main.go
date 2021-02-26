@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:generate stringer -output stringer.go -linecomment -type=char
+
 // Command web2go is an attempt to mechanically translate tex.web to Go. (Work
 // in progress.)
 //

@@ -11,18 +11,19 @@ ngrep='TODOOK\|testdata\|TODO-'
 all:
 	@LC_ALL=C date
 	@go version 2>&1 | tee log
-	@gofmt -l -s -w *.go
-	@go install -v ./...
-	@go test -i
-	@go test 2>&1 -timeout 1h | tee -a log
-	@go vet 2>&1 | grep -v $(ngrep) || true
-	@golint 2>&1 | grep -v $(ngrep) || true
-	@make todo
-	@misspell *.go
-	@staticcheck | grep -v 'scanner\.go' || true
-	@maligned || true
-	@grep -n --color=always 'FAIL\|PASS' log 
+	@gofmt -l -s -w *.go 2>&1 | tee -a log
+	@go install -v ./... 2>&1 | tee -a log
+	@go test -i 2>&1 | tee -a log
+	@go test 2>&1 -timeout 1h 2>&1 | tee -a log
+	@go vet 2>&1 | grep -v $(ngrep) || true 2>&1 | tee -a log
+	@golint 2>&1 | grep -v $(ngrep) || true 2>&1 | tee -a log
+	@make todo 2>&1 | tee -a log
+	@misspell *.go 2>&1 | tee -a log
+	@nilness . ./... 2>&1 | tee -a log
+	@staticcheck | grep -v 'scanner\.go' || true 2>&1 | tee -a log
+	@maligned || true 2>&1 | tee -a log
 	@LC_ALL=C date 2>&1 | tee -a log
+	@grep -n --color=always 'FAIL\|PASS' log 
 
 clean:
 	go clean
@@ -32,9 +33,9 @@ edit:
 	@touch log
 	@if [ -f "Session.vim" ]; then gvim -S & else gvim -p Makefile parser.yy *.go & fi
 
-editor:
-	gofmt -l -s -w *.go
-	GO111MODULE=off nilness . ./... 2>&1 | tee log
+editor: stringer.go
+	gofmt -l -s -w *.go 2>&1 | tee log
+	GO111MODULE=off go test ./... 2>&1 | tee -a log
 	GO111MODULE=off go install -v ./... 2>&1 | tee -a log
 	@gofmt -l -s -w .
 
@@ -52,3 +53,5 @@ todo:
 	@grep -nr $(grep) [^[:alpha:]]println * | grep -v $(ngrep) || true
 	@grep -nir $(grep) 'work.*progress' || true
 
+stringer.go: scanner.go
+	stringer -output stringer.go -linecomment -type=char

@@ -90,19 +90,47 @@ func TestScanner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	l, err := newLexer(b, "tex.p")
+	s, err := newScanner(b, "tex.p")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var toks int
 	for {
-		tok := l.scan()
-		if tok.rune < 0 {
+		tok := s.scan()
+		if tok.char < 0 {
 			break
 		}
 
 		toks++
 	}
+	if err := s.errList(); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Logf("toks: %v", toks)
+}
+
+func TestParser(t *testing.T) {
+	task := newTask(os.Args)
+	task.in = "tex.web"
+	task.tempDir = tempDir
+	task.p = filepath.Join(task.tempDir, "tex.p")
+	if b, err := task.web2p(); err != nil {
+		t.Fatalf("%s\n%v", b, err)
+	}
+
+	b, err := ioutil.ReadFile(task.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	program, err := parse(b, "tex.p")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if program == nil {
+		t.Fatal("empty result but no error")
+	}
 }

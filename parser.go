@@ -30,8 +30,8 @@ func parse(b []byte, name string) (*program, error) {
 
 type parser struct {
 	*scanner
-	tok      *tok // current token, nil initially and if consumed by shift()
-	ungetBuf *tok
+	tok      *tok // current token if not nil and ungetBuf is nil
+	ungetBuf *tok // current token if not nil
 
 	debug          bool
 	overflowCheck  bool
@@ -95,7 +95,7 @@ func (p *parser) directives(tok *tok) {
 		case "D-":
 			p.debug = false
 		default:
-			panic(todop(p, "%q", v))
+			p.err(tok, "unsupported directive: %q", v)
 		}
 	}
 }
@@ -167,7 +167,7 @@ func (p *parser) must(ch char) (tok *tok) {
 		return tok
 	}
 
-	p.err(tok, "%s, expected %s (%v:)", tok, ch.str(), origin(3))
+	p.err(tok, "%s, expected %s (%v)", tok, ch.str(), origin(3))
 	return nil
 }
 
@@ -200,7 +200,7 @@ func (s *scope) declare(p *parser, n node, nm string) {
 		s.m = m
 	}
 	if ex := m[nm]; ex != nil {
-		p.err(n, "%s redeclared, previous declaration at %v:", nm, ex)
+		p.err(n, "%s redeclared, previous declaration at %v:", nm, ex.Position())
 		return
 	}
 
@@ -246,6 +246,7 @@ type programParameterList struct{}
 func (p *parser) programParameterList() *programParameterList {
 	if p.c().char == '(' {
 		p.err(p.c(), "ProgramParameterList not supported")
+		p.shift()
 	}
 	return nil
 }
@@ -296,6 +297,11 @@ func (p *parser) statementList(s *scope) (r []*statement) {
 	r = []*statement{p.statement(s)}
 	for p.c().char == ';' {
 		p.shift()
+		switch p.c().char {
+		case UNTIL, ELSE, END:
+			return r
+		}
+
 		r = append(r, p.statement(s))
 	}
 	return r
@@ -311,10 +317,11 @@ type statement struct {
 func (p *parser) statement(s *scope) *statement {
 	var label *tok
 	if p.c().char == INT_LITERAL {
-		panic(todop(p, "", p.c()))
+		label = p.shift()
+		p.mustShift(':')
 	}
 	switch p.c().char {
-	case BEGIN, IF, WHILE, REPEAT, FOR, WITH:
+	case BEGIN, IF, WHILE, REPEAT, FOR, WITH, CASE:
 		return &statement{
 			label:                label,
 			structuredStatmenent: p.structuredStatmenent(s),
@@ -332,25 +339,140 @@ func (p *parser) statement(s *scope) *statement {
 type structuredStatmenent struct {
 	*repetitiveStatement
 	*compoundStatement
+	*conditionalStatement
 }
 
 func (p *parser) structuredStatmenent(s *scope) *structuredStatmenent {
 	switch p.c().char {
-	case FOR, WHILE:
+	case FOR, WHILE, REPEAT:
 		return &structuredStatmenent{repetitiveStatement: p.repetitiveStatement(s)}
 	case BEGIN:
 		return &structuredStatmenent{compoundStatement: p.compoundStatement(s)}
-	default:
-		p.err(p.c(), "unexpected %q, expected compound statement or conditional statement or repetitive statement or with statement", p.c().src)
+	case CASE, IF:
+		return &structuredStatmenent{conditionalStatement: p.conditionalStatement(s)}
 	}
+	p.err(p.c(), "unexpected %q, expected compound statement or conditional statement or repetitive statement or with statement", p.c().src)
 	p.shift()
 	return nil
+}
+
+// conditionalStatement = IfStatement | CaseStatement .
+type conditionalStatement struct {
+	*caseStatement
+	*ifStatement
+}
+
+func (p *parser) conditionalStatement(s *scope) *conditionalStatement {
+	switch p.c().char {
+	case CASE:
+		return &conditionalStatement{caseStatement: p.caseStatement(s)}
+	case IF:
+		return &conditionalStatement{ifStatement: p.ifStatement(s)}
+	}
+	p.err(p.c(), "unexpected %q, expected if statement or case statement", p.c().src)
+	p.shift()
+	return nil
+}
+
+// IfStatement = "if" BooleanExpression "then" Statement
+//	[ "else" Statement ] .
+type ifStatement struct {
+	if_ *tok
+	*expression
+	then *tok
+	*statement
+	else_         *tok
+	elseStatement *statement
+}
+
+func (p *parser) ifStatement(s *scope) *ifStatement {
+	r := &ifStatement{
+		if_:        p.mustShift(IF),
+		expression: p.expression(),
+		then:       p.mustShift(THEN),
+		statement:  p.statement(s),
+	}
+	if p.c().char == ELSE {
+		r.else_ = p.shift()
+		r.elseStatement = p.statement(s)
+	}
+	return r
+}
+
+// CaseStatement = "case" Caselndex "of"
+//	Case { ";" Case } [";"]
+//	"end"
+type caseStatement struct {
+	case_ *tok
+	*expression
+	of   *tok
+	list []*case_
+	semi *tok
+	end  *tok
+}
+
+func (p *parser) caseStatement(s *scope) *caseStatement {
+	return &caseStatement{
+		p.mustShift(CASE),
+		p.expression(),
+		p.mustShift(OF),
+		p.caseList(s),
+		p.semiOpt(),
+		p.mustShift(END),
+	}
+}
+
+func (p *parser) semiOpt() *tok {
+	if p.c().char == ';' {
+		return p.shift()
+	}
+
+	return nil
+}
+
+func (p *parser) caseList(s *scope) (r []*case_) {
+	r = []*case_{p.case_(s)}
+	for p.c().char == ';' {
+		semi := p.shift()
+		if p.c().char == END {
+			p.unget(semi)
+			return r
+		}
+
+		r = append(r, p.case_(s))
+	}
+	return r
+}
+
+// Case = Constant { "," Constant } ":" Statement .
+type case_ struct {
+	list  []*constant
+	colon *tok
+	*statement
+}
+
+func (p *parser) case_(s *scope) *case_ {
+	return &case_{
+		p.constantList(),
+		p.mustShift(':'),
+		p.statement(s),
+	}
+}
+
+func (p *parser) constantList() (r []*constant) {
+	r = []*constant{p.constant()}
+	for p.c().char == ',' {
+		p.shift()
+		r = append(r, p.constant())
+	}
+	return r
 }
 
 // RepetitiveStatement = WhileStatement | RepeatStatement | ForStatement .
 type repetitiveStatement struct {
 	*forStatement
 	*whileStatement
+	*repeatStatement
 }
 
 func (p *parser) repetitiveStatement(s *scope) *repetitiveStatement {
@@ -359,11 +481,29 @@ func (p *parser) repetitiveStatement(s *scope) *repetitiveStatement {
 		return &repetitiveStatement{forStatement: p.forStatement(s)}
 	case WHILE:
 		return &repetitiveStatement{whileStatement: p.whileStatement(s)}
-	default:
-		p.err(p.c(), "unexpected %q, expected while statement or repeat statement or for statement", p.c().src)
+	case REPEAT:
+		return &repetitiveStatement{repeatStatement: p.repeatStatement(s)}
 	}
+	p.err(p.c(), "unexpected %q, expected while statement or repeat statement or for statement", p.c().src)
 	p.shift()
 	return nil
+}
+
+// RepeatStatement = "repeat" Statement "until" Expression .
+type repeatStatement struct {
+	repeat *tok
+	list   []*statement
+	until  *tok
+	*expression
+}
+
+func (p *parser) repeatStatement(s *scope) *repeatStatement {
+	return &repeatStatement{
+		p.mustShift(REPEAT),
+		p.statementList(s),
+		p.mustShift(UNTIL),
+		p.expression(),
+	}
 }
 
 // WhileStatement = "while" BooleanExpression "do" Statement .
@@ -412,9 +552,8 @@ func (p *parser) toOrDownto() *tok {
 	switch p.c().char {
 	case TO, DOWNTO:
 		return p.shift()
-	default:
-		p.err(p.c(), "unexpected %q, expected 'to' or 'downto'", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected 'to' or 'downto'", p.c().src)
 	p.shift()
 	return nil
 }
@@ -422,6 +561,8 @@ func (p *parser) toOrDownto() *tok {
 // SimpleStatement = EmptyStatement | AssignmentStatement | ProcedureStatement | GotoStatement .
 type simpleStatement struct {
 	*assignmentStatement
+	*procedureStatement
+	*gotoStatement
 }
 
 func (p *parser) simpleStatement(s *scope) *simpleStatement {
@@ -429,20 +570,83 @@ func (p *parser) simpleStatement(s *scope) *simpleStatement {
 	case ';', END:
 		return &simpleStatement{}
 	case GOTO:
-		panic(todop(p, "", p.c()))
+		return &simpleStatement{gotoStatement: p.gotoStatement()}
 	case IDENTIFIER:
 		id := p.shift()
-		if p.c().char == '(' {
-			panic(todop(p, "", p.c()))
+		switch p.c().char {
+		case '(', ';', ELSE, END, UNTIL:
+			p.unget(id)
+			return &simpleStatement{procedureStatement: p.procedureStatement()}
 		}
 
 		p.unget(id)
 		return &simpleStatement{assignmentStatement: p.assignmentStatement()}
-	default:
-		p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	p.shift()
 	return nil
+}
+
+// GotoStatement = "goto" Label .
+type gotoStatement struct {
+	goto_ *tok
+	label *tok
+}
+
+func (p *parser) gotoStatement() *gotoStatement {
+	return &gotoStatement{
+		p.mustShift(GOTO),
+		p.mustShift(INT_LITERAL),
+	}
+}
+
+// ProcedureStatement = ProcedureIdentifier [ ActualParameterList | WriteParameterList ] .
+type procedureStatement struct {
+	ident *tok
+	list  []*arg
+}
+
+func (p *parser) procedureStatement() *procedureStatement {
+	return &procedureStatement{
+		p.mustShift(IDENTIFIER),
+		p.argList(),
+	}
+}
+
+func (p *parser) argList() (r []*arg) {
+	if p.c().char != '(' {
+		return nil
+	}
+
+	p.shift()
+	r = []*arg{p.arg()}
+	for p.c().char == ',' {
+		p.shift()
+		r = append(r, p.arg())
+	}
+	p.mustShift(')')
+	return r
+}
+
+type arg struct {
+	*expression
+	colon  *tok
+	width  *expression
+	colon2 *tok
+	width2 *expression
+}
+
+func (p *parser) arg() *arg {
+	r := &arg{expression: p.expression()}
+	if p.c().char == ':' {
+		r.colon = p.shift()
+		r.width = p.expression()
+		if p.c().char == ':' {
+			r.colon2 = p.shift()
+			r.width2 = p.expression()
+		}
+	}
+	return r
 }
 
 // AssignmentStatement = ( Variable | FunctionIdentifier ) ":=" Expression .
@@ -512,11 +716,13 @@ type factor struct {
 	ident *tok
 	*functionDesignator
 	*variable
+	*expression
+	not *factor
 }
 
 func (p *parser) factor() *factor {
 	switch p.c().char {
-	case INT_LITERAL, STR_LITERAL:
+	case INT_LITERAL, STR_LITERAL, REAL_LITERAL:
 		return &factor{unsignedConstant: p.unsignedConstant()}
 	case IDENTIFIER:
 		id := p.shift()
@@ -527,9 +733,16 @@ func (p *parser) factor() *factor {
 
 		p.unget(id)
 		return &factor{variable: p.variable()}
-	default:
-		p.err(p.c(), "unexpected %q, expected unsigned constant or varible or set constructor or 'not' or '( expression ')'", p.c().src)
+	case '(':
+		p.shift()
+		r := &factor{expression: p.expression()}
+		p.mustShift(')')
+		return r
+	case NOT:
+		p.shift()
+		return &factor{not: p.factor()}
 	}
+	p.err(p.c(), "unexpected %q, expected unsigned constant or varible or set constructor or 'not' or '( expression ')'", p.c().src)
 	p.shift()
 	return nil
 }
@@ -567,13 +780,12 @@ type unsignedConstant struct {
 
 func (p *parser) unsignedConstant() *unsignedConstant {
 	switch p.c().char {
-	case INT_LITERAL:
+	case INT_LITERAL, REAL_LITERAL:
 		return &unsignedConstant{unsignedNumber: p.unsignedNumber()}
 	case STR_LITERAL:
 		return &unsignedConstant{str: p.shift()}
-	default:
-		p.err(p.c(), "unexpected %q, expected unsigned number or character string or identifier or 'nil'", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected unsigned number or character string or identifier or 'nil'", p.c().src)
 	p.shift()
 	return nil
 }
@@ -590,9 +802,8 @@ func (p *parser) unsignedNumber() *unsignedNumber {
 		return &unsignedNumber{int: p.shift()}
 	case REAL_LITERAL:
 		return &unsignedNumber{real: p.shift()}
-	default:
-		p.err(p.c(), "unexpected %q, expected unsigned integer or unsigned real", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected unsigned integer or unsigned real", p.c().src)
 	p.shift()
 	return nil
 }
@@ -642,6 +853,7 @@ func (p *parser) expressionList() (r []*expression) {
 type variable struct {
 	entire *tok
 	*componentVariable
+	deref *variable
 }
 
 func (p *parser) variable() (r *variable) {
@@ -652,17 +864,17 @@ func (p *parser) variable() (r *variable) {
 			switch p.c().char {
 			case '[', '.':
 				r = &variable{componentVariable: p.componentVariable(r)}
-			case ASSIGN, ']', ';', '+', '(', ')', DO, DIV, LE, TO, DOWNTO:
-				return r
+			case '^':
+				p.shift()
+				r = &variable{deref: r}
 			default:
-				panic(todop(p, "", p.c()))
+				return r
 			}
 		}
-	default:
-		p.err(p.c(), "unexpected %q, expected variable identifier or component variable or identified variable of buffer variable", p.c().src)
-		p.shift()
-		return nil
 	}
+	p.err(p.c(), "unexpected %q, expected variable identifier or component variable or identified variable of buffer variable", p.c().src)
+	p.shift()
+	return nil
 }
 
 // ComponentVariable = IndexedVariahle | FieldDesignator .
@@ -677,9 +889,8 @@ func (p *parser) componentVariable(v *variable) *componentVariable {
 		return &componentVariable{indexedVariable: p.indexedVariable(v)}
 	case '.':
 		return &componentVariable{fieldDesignator: p.fieldDesignator(v)}
-	default:
-		p.err(p.c(), "unexpected %q, expected indexed variable or field designator", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected indexed variable or field designator", p.c().src)
 	p.shift()
 	return nil
 }
@@ -719,6 +930,7 @@ func (p *parser) indexedVariable(v *variable) *indexedVariable {
 // ProcedureAndFunctionDeclarationPart = { ( ProcedureDeclaration | FunctionDeclaration ) ";" } .
 type procedureAndFunctionDeclarationPart struct {
 	*procedureDeclaration
+	*functionDeclaration
 }
 
 func (p *parser) procedureAndFunctionDeclarationPart(s *scope) (r []*procedureAndFunctionDeclarationPart) {
@@ -727,11 +939,57 @@ func (p *parser) procedureAndFunctionDeclarationPart(s *scope) (r []*procedureAn
 		case PROCEDURE:
 			r = append(r, &procedureAndFunctionDeclarationPart{procedureDeclaration: p.procedureDeclaration(s)})
 		case FUNCTION:
-			panic(todop(p, "", p.c()))
+			r = append(r, &procedureAndFunctionDeclarationPart{functionDeclaration: p.functionDeclaration(s)})
 		default:
 			return r
 		}
 		p.mustShift(';')
+	}
+}
+
+// FunctionDeclaration = FunctionHeading ";" Block |
+//	FunctionHeading ";" Directive |
+//	FunctionIdentification ";" Block .
+type functionDeclaration struct {
+	scope
+	*functionHeading
+	semi *tok
+	*block
+	forward *tok
+}
+
+func (n *functionDeclaration) Position() token.Position { return n.functionHeading.function.Position() }
+
+func (p *parser) functionDeclaration(s *scope) *functionDeclaration {
+	r := &functionDeclaration{scope: scope{parent: s}}
+	r.functionHeading = p.functionHeading()
+	r.semi = p.mustShift(';')
+	if t := p.c(); t.char == IDENTIFIER && strings.ToLower(t.src) == "forward" {
+		r.forward = p.shift()
+		return r
+	}
+
+	r.block = p.block(&r.scope)
+	s.declare(p, r, r.functionHeading.ident.src)
+	return r
+}
+
+// FunctionHeading = "function" Identifier [ FormalParameterList ] ":" Type .
+type functionHeading struct {
+	function *tok
+	ident    *tok
+	list     []*formalParameterSection
+	colon    *tok
+	typ      *typ
+}
+
+func (p *parser) functionHeading() *functionHeading {
+	return &functionHeading{
+		p.mustShift(FUNCTION),
+		p.mustShift(IDENTIFIER),
+		p.formalParameterList(),
+		p.mustShift(':'),
+		p.typ(),
 	}
 }
 
@@ -743,18 +1001,28 @@ type procedureDeclaration struct {
 	*procedureHeading
 	semi *tok
 	*block
+	forward *tok
+}
+
+func (n *procedureDeclaration) Position() token.Position {
+	return n.procedureHeading.procedure.Position()
 }
 
 func (p *parser) procedureDeclaration(s *scope) *procedureDeclaration {
 	r := &procedureDeclaration{scope: scope{parent: s}}
 	r.procedureHeading = p.procedureHeading()
 	r.semi = p.mustShift(';')
-	r.block = p.block(s)
+	if t := p.c(); t.char == IDENTIFIER && strings.ToLower(t.src) == "forward" {
+		r.forward = p.shift()
+		return r
+	}
+
+	r.block = p.block(&r.scope)
 	s.declare(p, r, r.procedureHeading.ident.src)
 	return r
 }
 
-// ProcedureHeading = "procedure" Identifier [ FormaIParameterList ] .
+// ProcedureHeading = "procedure" Identifier [ FormalParameterList ] .
 type procedureHeading struct {
 	procedure *tok
 	ident     *tok
@@ -774,13 +1042,72 @@ func (p *parser) formalParameterList() (r []*formalParameterSection) {
 		return nil
 	}
 
-	panic(todop(p, "", p.c()))
+	p.shift()
+	r = []*formalParameterSection{p.formalParameterSection()}
+	for p.c().char == ';' {
+		p.shift()
+		r = append(r, p.formalParameterSection())
+	}
+	p.mustShift(')')
+	return r
 }
 
-type formalParameterSection struct{}
+// FormalParameterSection = ValueParameterSpecification |
+//	VariableParamererSpecification |
+//	ProceduralParameterSpecification |
+//	FunctionalParameterSpecification .
+type formalParameterSection struct {
+	*valueParameterSpecification
+	*variableParameterSpecification
+}
 
 func (p *parser) formalParameterSection() *formalParameterSection {
-	panic(todop(p, "", p.c()))
+	switch p.c().char {
+	case VAR:
+		return &formalParameterSection{variableParameterSpecification: p.variableParameterSpecification()}
+	case PROCEDURE:
+		p.err(p.c(), "procedure parameters not supported")
+	case FUNCTION:
+		p.err(p.c(), "functional parameters not supported")
+	case IDENTIFIER:
+		return &formalParameterSection{valueParameterSpecification: p.valueParameterSpecification()}
+	default:
+		p.err(p.c(), "unexpected %q, expected value/variable/procedural/functional parameter specification", p.c().src)
+	}
+	p.shift()
+	return nil
+}
+
+// VariableParameterSpecification = "var" IdentifierList ":" Type .
+type variableParameterSpecification struct {
+	var_  *tok
+	list  []*tok
+	colon *tok
+	*typ
+}
+
+func (p *parser) variableParameterSpecification() *variableParameterSpecification {
+	return &variableParameterSpecification{
+		p.mustShift(VAR),
+		p.identifierList(),
+		p.mustShift(':'),
+		p.typ(),
+	}
+}
+
+// ValueParameterSpecification = IdentifierList ":" Type .
+type valueParameterSpecification struct {
+	list  []*tok
+	colon *tok
+	*typ
+}
+
+func (p *parser) valueParameterSpecification() *valueParameterSpecification {
+	return &valueParameterSpecification{
+		p.identifierList(),
+		p.mustShift(':'),
+		p.typ(),
+	}
 }
 
 // VariableDeclarationPart = [ "var" VariableDeclaration ";" { VariableDeclaration ";" } ] .
@@ -883,9 +1210,8 @@ func (p *parser) typ() *typ {
 		return &typ{simpleType: p.simpleType()}
 	case PACKED, RECORD, FILE, ARRAY:
 		return &typ{structuredType: p.structuredType()}
-	default:
-		p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	p.shift()
 	return nil
 }
@@ -924,9 +1250,8 @@ func (p *parser) unpackedStructuredType() *unpackedStructuredType {
 		return &unpackedStructuredType{recordType: p.recordType()}
 	case ARRAY:
 		return &unpackedStructuredType{arrayType: p.arrayType()}
-	default:
-		p.err(p.c(), "unexpected %q, expected arary type or record type or set type or file type", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected arary type or record type or set type or file type", p.c().src)
 	p.shift()
 	return nil
 }
@@ -998,13 +1323,16 @@ func (p *parser) fieldList() *fieldList {
 			case END:
 				return r
 			default:
-				_ = r
-				panic(todop(p, "", p.c()))
+				p.err(p.c(), "unexpected %q, expected 'case' or 'end'", p.c().src)
+				p.shift()
+				return nil
 			}
 		case ')':
 			return r
 		default:
-			panic(todop(p, "", p.c()))
+			p.err(p.c(), "unexpected %q, expected ';' or ','", p.c().src)
+			p.shift()
+			return nil
 		}
 	case CASE:
 		r := &fieldList{variantPart: p.variantPart()}
@@ -1012,9 +1340,8 @@ func (p *parser) fieldList() *fieldList {
 			p.shift()
 		}
 		return r
-	default:
-		p.err(p.c(), "unexpected %q, expected fixed part or variant part", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected fixed part or variant part", p.c().src)
 	p.shift()
 	return nil
 }
@@ -1094,10 +1421,12 @@ func (p *parser) variantSelector() *variantSelector {
 	tok := p.mustShift(IDENTIFIER)
 	switch p.c().char {
 	case ':':
-		panic(todop(p, "", p.c()))
+		p.err(tok, "tag fields not supported")
 	default:
 		return &variantSelector{typ: tok}
 	}
+	p.shift()
+	return nil
 }
 
 // FixedPart = RecordSection { ";" RecordSection } .
@@ -1191,9 +1520,8 @@ func (p *parser) simpleType() *simpleType {
 
 		p.unget(id)
 		return &simpleType{ordinalType: p.ordinalType()}
-	default:
-		p.err(p.c(), "unexpected %q, expected ordinal type or real type identifier", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, expected ordinal type or real type identifier", p.c().src)
 	p.shift()
 	return nil
 }
@@ -1216,9 +1544,8 @@ func (p *parser) ordinalType() *ordinalType {
 
 		p.unget(id)
 		return &ordinalType{subrangeType: p.subrangeType()}
-	default:
-		p.err(p.c(), "unexpected %q, enumerated type or subrange type or ordinal type identifier", p.c().src)
 	}
+	p.err(p.c(), "unexpected %q, enumerated type or subrange type or ordinal type identifier", p.c().src)
 	p.shift()
 	return nil
 }
@@ -1341,11 +1668,10 @@ func (p *parser) constant() *constant {
 		return &constant{
 			str: p.shift(),
 		}
-	default:
-		p.err(p.c(), "expected constant")
-		p.shift()
-		return nil
 	}
+	p.err(p.c(), "expected constant")
+	p.shift()
+	return nil
 }
 
 func (p *parser) sign() *tok {
@@ -1384,7 +1710,7 @@ type labelDeclarationPart struct {
 	semi  *tok
 }
 
-func (n *labelDeclarationPart) Position() token.Position { return n.list[0].Position() }
+func (n *labelDeclarationPart) Position() token.Position { return n.label.Position() }
 
 func (p *parser) labelDeclarationPart(s *scope) *labelDeclarationPart {
 	if p.c().char != LABEL {
@@ -1397,7 +1723,7 @@ func (p *parser) labelDeclarationPart(s *scope) *labelDeclarationPart {
 		p.mustShift(';'),
 	}
 	for _, v := range r.list {
-		s.declare(p, r, v.src)
+		s.declare(p, v, v.src)
 	}
 	return r
 }

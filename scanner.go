@@ -45,6 +45,7 @@ const (
 	LABEL                             // label
 	LE                                // <=
 	MOD                               // mod
+	NE                                // <>
 	NIL                               // nil
 	NOT                               // not
 	OF                                // of
@@ -272,7 +273,10 @@ more:
 		for {
 			switch s.pre() {
 			case '\'':
-				s.post()
+				if s.pre() == '\'' {
+					break
+				}
+
 				return &tok{char: STR_LITERAL}
 			case 0:
 				s.err("unterminated comment")
@@ -287,9 +291,13 @@ more:
 
 		return &tok{char: c}
 	case '<':
-		if s.pre() == '=' {
+		switch s.pre() {
+		case '=':
 			s.post()
 			return &tok{char: LE}
+		case '>':
+			s.post()
+			return &tok{char: NE}
 		}
 
 		return &tok{char: c}

@@ -32,31 +32,32 @@ func _() {
 	_ = x[LABEL-57365]
 	_ = x[LE-57366]
 	_ = x[MOD-57367]
-	_ = x[NIL-57368]
-	_ = x[NOT-57369]
-	_ = x[OF-57370]
-	_ = x[OR-57371]
-	_ = x[PACKED-57372]
-	_ = x[PROCEDURE-57373]
-	_ = x[PROGRAM-57374]
-	_ = x[REAL_LITERAL-57375]
-	_ = x[RECORD-57376]
-	_ = x[REPEAT-57377]
-	_ = x[SEP-57378]
-	_ = x[SET-57379]
-	_ = x[STR_LITERAL-57380]
-	_ = x[THEN-57381]
-	_ = x[TO-57382]
-	_ = x[TYPE-57383]
-	_ = x[UNTIL-57384]
-	_ = x[VAR-57385]
-	_ = x[WHILE-57386]
-	_ = x[WITH-57387]
+	_ = x[NE-57368]
+	_ = x[NIL-57369]
+	_ = x[NOT-57370]
+	_ = x[OF-57371]
+	_ = x[OR-57372]
+	_ = x[PACKED-57373]
+	_ = x[PROCEDURE-57374]
+	_ = x[PROGRAM-57375]
+	_ = x[REAL_LITERAL-57376]
+	_ = x[RECORD-57377]
+	_ = x[REPEAT-57378]
+	_ = x[SEP-57379]
+	_ = x[SET-57380]
+	_ = x[STR_LITERAL-57381]
+	_ = x[THEN-57382]
+	_ = x[TO-57383]
+	_ = x[TYPE-57384]
+	_ = x[UNTIL-57385]
+	_ = x[VAR-57386]
+	_ = x[WHILE-57387]
+	_ = x[WITH-57388]
 }
 
-const _char_name = "andarrayassignbegincaseconst..divdodowntoelseendfileforfunction>=gotoidentifierifininteger literallabel<=modnilnotoforpackedprocedureprogramreal literalrecordrepeatseparatorsetstring literalthentotypeuntilvarwhilewith"
+const _char_name = "andarrayassignbegincaseconst..divdodowntoelseendfileforfunction>=gotoidentifierifininteger literallabel<=mod<>nilnotoforpackedprocedureprogramreal literalrecordrepeatseparatorsetstring literalthentotypeuntilvarwhilewith"
 
-var _char_index = [...]uint8{0, 3, 8, 14, 19, 23, 28, 30, 33, 35, 41, 45, 48, 52, 55, 63, 65, 69, 79, 81, 83, 98, 103, 105, 108, 111, 114, 116, 118, 124, 133, 140, 152, 158, 164, 173, 176, 190, 194, 196, 200, 205, 208, 213, 217}
+var _char_index = [...]uint8{0, 3, 8, 14, 19, 23, 28, 30, 33, 35, 41, 45, 48, 52, 55, 63, 65, 69, 79, 81, 83, 98, 103, 105, 108, 110, 113, 116, 118, 120, 126, 135, 142, 154, 160, 166, 175, 178, 192, 196, 198, 202, 207, 210, 215, 219}
 
 func (i char) String() string {
 	i -= 57344

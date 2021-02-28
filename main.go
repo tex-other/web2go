@@ -260,8 +260,12 @@ func (t *task) web2p() ([]byte, error) {
 		t.p = p
 		t.cleanup = append(t.cleanup, func() { os.Remove(p) })
 	default:
-		if err := os.Rename(p, t.p); err != nil {
-			return b, err
+		raw, err := ioutil.ReadFile(p)
+		if err != nil {
+			return b, fmt.Errorf("could not read tangled output file %q: %w", p, err)
+		}
+		if err = ioutil.WriteFile(t.p, raw, 0666); err != nil {
+			return b, fmt.Errorf("could not write tangled output file %q: %w", t.p, err)
 		}
 	}
 

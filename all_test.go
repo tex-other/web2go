@@ -127,7 +127,7 @@ func TestParser(t *testing.T) {
 
 	program, err := parse(b, "tex.p")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("could not parse: %+v", err)
 	}
 
 	if program == nil {

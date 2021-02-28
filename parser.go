@@ -613,17 +613,18 @@ func (p *parser) forStatement(s *scope) *forStatement {
 
 type identifier struct {
 	*tok
-	//TODO
+	s *scope
+	n node
 }
 
 func (p *parser) identifier(s *scope) *identifier {
-	tok := p.mustShift(IDENTIFIER)
-	if tok != nil {
-		if _, n := s.find(tok.src); n == nil {
-			p.err(tok, "undefined: %s", tok.src)
+	r := &identifier{tok: p.mustShift(IDENTIFIER)}
+	if r.tok != nil {
+		if r.s, r.n = s.find(r.tok.src); r.n == nil {
+			p.err(r.tok, "undefined: %s", r.tok.src)
 		}
 	}
-	return &identifier{tok: tok}
+	return r
 }
 
 func (p *parser) toOrDownto() *tok {
@@ -1074,7 +1075,7 @@ type functionHeading struct {
 	ident    *tok
 	list     []*formalParameterSection
 	colon    *tok
-	typ      *typeNode
+	*typeNode
 }
 
 func (p *parser) functionHeading(s *scope) *functionHeading {
@@ -1083,7 +1084,7 @@ func (p *parser) functionHeading(s *scope) *functionHeading {
 		p.mustShift(IDENTIFIER),
 		p.formalParameterList(s),
 		p.mustShift(':'),
-		p.typ(s),
+		p.typeNode(s),
 	}
 }
 
@@ -1220,7 +1221,7 @@ func (p *parser) variableParameterSpecification(s *scope) *variableParameterSpec
 		p.mustShift(VAR),
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(s),
+		p.typeNode(s),
 	}
 }
 
@@ -1235,7 +1236,7 @@ func (p *parser) valueParameterSpecification(s *scope) *valueParameterSpecificat
 	return &valueParameterSpecification{
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(s),
+		p.typeNode(s),
 	}
 }
 
@@ -1270,7 +1271,7 @@ func (p *parser) variableDeclarationList(s *scope) (r []*variableDeclaration) {
 type variableDeclaration struct {
 	list  []*tok
 	colon *tok
-	typ   *typeNode
+	*typeNode
 }
 
 func (n *variableDeclaration) Position() token.Position { return n.list[0].Position() }
@@ -1279,7 +1280,7 @@ func (p *parser) variableDeclaration(s *scope) *variableDeclaration {
 	r := &variableDeclaration{
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(s),
+		p.typeNode(s),
 	}
 	for _, v := range r.list {
 		s.declare(p, r, v.src)
@@ -1308,7 +1309,8 @@ func (p *parser) typeDefinitionPart(s *scope) *typeDefinitionPart {
 type typeDefinition struct {
 	ident *tok
 	eq    *tok
-	typ   *typeNode
+	*typeNode
+	typ
 }
 
 func (n *typeDefinition) Position() token.Position { return n.ident.Position() }
@@ -1319,11 +1321,15 @@ func (p *parser) typeDefinition(s *scope) *typeDefinition {
 	}
 
 	r := &typeDefinition{
-		p.mustShift(IDENTIFIER),
-		p.mustShift('='),
-		p.typ(s),
+		ident:    p.mustShift(IDENTIFIER),
+		eq:       p.mustShift('='),
+		typeNode: p.typeNode(s),
 	}
 	s.declare(p, r, r.ident.src)
+	r.typ = r.typeNode.typ
+	if r.typ == nil {
+		p.err(r.ident, "type not resolved: %s", r.ident.src)
+	}
 	return r
 }
 
@@ -1331,14 +1337,19 @@ func (p *parser) typeDefinition(s *scope) *typeDefinition {
 type typeNode struct {
 	*simpleType
 	*structuredType
+	typ
 }
 
-func (p *parser) typ(s *scope) *typeNode {
+func (p *parser) typeNode(s *scope) *typeNode {
 	switch p.c().ch {
 	case INT_LITERAL, IDENTIFIER, '-':
-		return &typeNode{simpleType: p.simpleType(s)}
+		r := &typeNode{simpleType: p.simpleType(s)}
+		r.typ = r.simpleType.typ
+		return r
 	case PACKED, RECORD, FILE, ARRAY:
-		return &typeNode{structuredType: p.structuredType(s)}
+		r := &typeNode{structuredType: p.structuredType(s)}
+		r.typ = r.structuredType.typ
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
@@ -1350,19 +1361,27 @@ func (p *parser) typ(s *scope) *typeNode {
 type structuredType struct {
 	packed *tok
 	*unpackedStructuredType
+	typ
 }
 
 func (p *parser) structuredType(s *scope) *structuredType {
 	if p.c().ch == PACKED {
-		return &structuredType{
+		r := &structuredType{
 			packed:                 p.shift(),
 			unpackedStructuredType: p.unpackedStructuredType(s),
 		}
+		r.typ = r.unpackedStructuredType.typ
+		if r.typ != nil {
+			r.typ.setPacked()
+		}
+		return r
 	}
 
-	return &structuredType{
+	r := &structuredType{
 		unpackedStructuredType: p.unpackedStructuredType(s),
 	}
+	r.typ = r.unpackedStructuredType.typ
+	return r
 }
 
 // UnpackedStructuredType = ArrayType | RecordType | SetType | FileType .
@@ -1370,14 +1389,19 @@ type unpackedStructuredType struct {
 	*arrayType
 	*fileType
 	*recordType
+	typ
 }
 
 func (p *parser) unpackedStructuredType(s *scope) *unpackedStructuredType {
 	switch p.c().ch {
 	case FILE:
-		return &unpackedStructuredType{fileType: p.fileType(s)}
+		r := &unpackedStructuredType{fileType: p.fileType(s)}
+		r.typ = r.fileType.typ
+		return r
 	case RECORD:
-		return &unpackedStructuredType{recordType: p.recordType(s)}
+		r := &unpackedStructuredType{recordType: p.recordType(s)}
+		r.typ = r.recordType.typ
+		return r
 	case ARRAY:
 		return &unpackedStructuredType{arrayType: p.arrayType(s)}
 	}
@@ -1394,7 +1418,7 @@ type arrayType struct {
 	list   []*typeNode
 	rbrace *tok
 	of     *tok
-	typ    *typeNode
+	*typeNode
 }
 
 func (p *parser) arrayType(s *scope) *arrayType {
@@ -1404,14 +1428,14 @@ func (p *parser) arrayType(s *scope) *arrayType {
 		p.typeList(s),
 		p.mustShift(']'),
 		p.mustShift(OF),
-		p.typ(s),
+		p.typeNode(s),
 	}
 }
 
 func (p *parser) typeList(s *scope) (r []*typeNode) {
-	r = append(r, p.typ(s))
+	r = append(r, p.typeNode(s))
 	for p.c().ch == ',' {
-		r = append(r, p.typ(s))
+		r = append(r, p.typeNode(s))
 	}
 	return r
 }
@@ -1421,14 +1445,17 @@ type recordType struct {
 	record *tok
 	*fieldList
 	end *tok
+	typ
 }
 
 func (p *parser) recordType(s *scope) *recordType {
-	return &recordType{
-		p.mustShift(RECORD),
-		p.fieldList(s),
-		p.mustShift(END),
+	r := &recordType{
+		record:    p.mustShift(RECORD),
+		fieldList: p.fieldList(s),
+		end:       p.mustShift(END),
 	}
+	r.typ = newRecord(r.fieldList)
+	return r
 }
 
 // FieldList = [ ( FixedPart [ ";" VariantPart ] | VariantPart ) [ ";" ] ] .
@@ -1544,9 +1571,9 @@ func (p *parser) variant(s *scope) *variant {
 
 // VariantSelector = [ TagField ":"] TagType .
 type variantSelector struct {
-	tag   *tok
-	colon *tok
-	typ   *tok
+	tagField *tok
+	colon    *tok
+	tagType  *tok
 }
 
 func (p *parser) variantSelector() *variantSelector {
@@ -1555,7 +1582,7 @@ func (p *parser) variantSelector() *variantSelector {
 	case ':':
 		p.err(tok, "tag fields not supported")
 	default:
-		return &variantSelector{typ: tok}
+		return &variantSelector{tagType: tok}
 	}
 
 	p.shift()
@@ -1590,15 +1617,18 @@ func (p *parser) fixedPart(s *scope) []*recordSection {
 type recordSection struct {
 	list  []*tok
 	colon *tok
-	typ   *typeNode
+	*typeNode
+	typ
 }
 
 func (p *parser) recordSection(s *scope) *recordSection {
-	return &recordSection{
-		p.identifierList(),
-		p.mustShift(':'),
-		p.typ(s),
+	r := &recordSection{
+		list:     p.identifierList(),
+		colon:    p.mustShift(':'),
+		typeNode: p.typeNode(s),
 	}
+	r.typ = r.typeNode.typ
+	return r
 }
 
 // IdentifierList = Identifier { "," Identifier } .
@@ -1625,35 +1655,54 @@ type fileType struct {
 	file *tok
 	of   *tok
 	*typeNode
+	typ
 }
 
 func (p *parser) fileType(s *scope) *fileType {
-	return &fileType{
-		p.mustShift(FILE),
-		p.mustShift(OF),
-		p.typ(s),
+	r := &fileType{
+		file:     p.mustShift(FILE),
+		of:       p.mustShift(OF),
+		typeNode: p.typeNode(s),
 	}
+	r.typ = newFile(r.typeNode.typ)
+	return r
 }
 
 // SimpleType = OrdinalType | RealTypeldentifier.
 type simpleType struct {
 	*ordinalType
 	*identifier
+	typ
 }
 
 func (p *parser) simpleType(s *scope) *simpleType {
 	switch p.c().ch {
 	case INT_LITERAL, '-':
-		return &simpleType{ordinalType: p.ordinalType(s)}
+		r := &simpleType{ordinalType: p.ordinalType(s)}
+		r.typ = r.ordinalType.typ
+		return r
 	case IDENTIFIER:
 		id := p.shift()
 		if p.c().ch != DD {
 			p.unget(id)
-			return &simpleType{identifier: p.identifier(s)}
+			r := &simpleType{identifier: p.identifier(s)}
+			switch x := r.identifier.n.(type) {
+			case nil:
+				// already reported
+			case *typeDefinition:
+				r.typ = x.typ
+			case typ:
+				r.typ = x
+			default:
+				p.err(r.identifier, "not a type: %s", r.identifier.src)
+			}
+			return r
 		}
 
 		p.unget(id)
-		return &simpleType{ordinalType: p.ordinalType(s)}
+		r := &simpleType{ordinalType: p.ordinalType(s)}
+		r.typ = r.ordinalType.typ
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected ordinal type or real type identifier", p.c().src)
@@ -1665,12 +1714,15 @@ func (p *parser) simpleType(s *scope) *simpleType {
 type ordinalType struct {
 	*subrangeType
 	ident *tok
+	typ
 }
 
 func (p *parser) ordinalType(s *scope) *ordinalType {
 	switch p.c().ch {
 	case INT_LITERAL, '-':
-		return &ordinalType{subrangeType: p.subrangeType(s)}
+		r := &ordinalType{subrangeType: p.subrangeType(s)}
+		r.typ = r.subrangeType.typ
+		return r
 	case IDENTIFIER:
 		id := p.shift()
 		if p.c().ch != DD {
@@ -1678,10 +1730,12 @@ func (p *parser) ordinalType(s *scope) *ordinalType {
 		}
 
 		p.unget(id)
-		return &ordinalType{subrangeType: p.subrangeType(s)}
+		r := &ordinalType{subrangeType: p.subrangeType(s)}
+		r.typ = r.subrangeType.typ
+		return r
 	}
 
-	p.err(p.c(), "unexpected %q, enumerated type or subrange type or ordinal type identifier", p.c().src)
+	p.err(p.c(), "unexpected %q, expected enumerated type or subrange type or ordinal type identifier", p.c().src)
 	p.shift()
 	return nil
 }
@@ -1691,14 +1745,30 @@ type subrangeType struct {
 	first *constant
 	dd    *tok
 	last  *constant
+	typ
 }
 
 func (p *parser) subrangeType(s *scope) *subrangeType {
-	return &subrangeType{
-		p.constant(s),
-		p.mustShift(DD),
-		p.constant(s),
+	r := &subrangeType{
+		first: p.constant(s),
+		dd:    p.mustShift(DD),
+		last:  p.constant(s),
 	}
+	var first, last int
+	switch x := r.first.op.(type) {
+	case integerOperand:
+		first = int(x)
+	default:
+		p.err(r.first, "expected integer constant")
+	}
+	switch x := r.last.op.(type) {
+	case integerOperand:
+		last = int(x)
+	default:
+		p.err(r.first, "expected integer constant")
+	}
+	r.typ = newSubrange(first, last)
+	return r
 }
 
 // TypeDefinition ";" { TypeDefinitionPart ";" }
@@ -1758,6 +1828,9 @@ func (p *parser) constantDefinition(s *scope) *constantDefinition {
 		constant: p.constant(s),
 	}
 	s.declare(p, r, r.ident.src)
+	if r.op == nil || r.op.typ() == nil {
+		p.err(r.ident, "constant value/type undetermined: %s", r.ident.src)
+	}
 	return r
 }
 

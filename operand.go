@@ -6,9 +6,8 @@ package main // import "modernc.org/web2go"
 
 import (
 	"fmt"
+	"math"
 	"strconv"
-
-	"modernc.org/mathutil"
 )
 
 var (
@@ -27,15 +26,15 @@ func (op booleanOperand) typ() typ { return aBoolean }
 
 func newBooleanOperand(b bool) booleanOperand { return booleanOperand(b) }
 
-type integerOperand int
+type integerOperand int32
 
 func newIntegerOperandFromString(s string) (integerOperand, error) {
-	n, err := strconv.ParseUint(s, 10, 64)
+	n, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
 		return 0, err
 	}
 
-	if n > mathutil.MaxInt {
+	if n > math.MaxInt32 {
 		return 0, fmt.Errorf("overflow: %s", s)
 	}
 

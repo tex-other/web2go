@@ -48,6 +48,14 @@
 //
 // Used to optionally convert .p to .pas.
 //
+// Environment variables
+//
+// TARGET_GOARCH selects the GOARCH of the resulting Go code. Defaults to
+// $GOARCH or runtime.GOARCH if $GOARCH is not set.
+//
+// TARGET_GOOS selects the GOOS of the resulting Go code. Defaults to $GOOS or
+// runtime.GOOS if $GOOS is not set.
+//
 // Invocation
 //
 // To run the command:
@@ -115,6 +123,14 @@ import (
 	"runtime/debug"
 	"strings"
 )
+
+func env(name, deflt string) (r string) {
+	r = deflt
+	if s := os.Getenv(name); s != "" {
+		r = s
+	}
+	return r
+}
 
 func fatalf(s string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
@@ -195,6 +211,8 @@ func main() {
 	}
 
 	task.in = flag.Arg(0)
+	task.goarch = env("TARGET_GOARCH", env("GOARCH", runtime.GOARCH))
+	task.goos = env("TARGET_GOOS", env("GOOS", runtime.GOOS))
 	if err := task.main(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -205,6 +223,8 @@ type task struct {
 	args       []string
 	changeFile string
 	cleanup    []func()
+	goarch     string
+	goos       string
 	in         string
 	o          string
 	p          string

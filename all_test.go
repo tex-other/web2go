@@ -120,6 +120,8 @@ func TestScanner(t *testing.T) {
 func TestParser(t *testing.T) {
 	task := newTask(os.Args)
 	task.in = "tex.web"
+	task.goos = runtime.GOOS
+	task.goarch = runtime.GOARCH
 	var err error
 	task.changeFile, err = filepath.Abs("changefile.ch")
 	if err != nil {
@@ -137,7 +139,7 @@ func TestParser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	program, err := parse(b, "tex.p")
+	program, err := parse(task, b, "tex.p")
 	if err != nil {
 		t.Fatalf("could not parse: %+v", err)
 	}

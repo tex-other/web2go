@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"go/token"
 	"strings"
+
+	"modernc.org/strutil"
 )
 
-func parse(b []byte, name string) (*program, error) {
-	p, err := newParser(b, name)
+func parse(t *task, b []byte, name string) (*program, error) {
+	p, err := newParser(t, b, name)
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +32,7 @@ func parse(b []byte, name string) (*program, error) {
 
 type parser struct {
 	*scanner
+	task     *task
 	tok      *tok // current token if not nil and ungetBuf is nil
 	ungetBuf *tok // current token if not nil
 	universe scope
@@ -40,7 +43,7 @@ type parser struct {
 	seenDirectives bool
 }
 
-func newParser(b []byte, name string) (*parser, error) {
+func newParser(t *task, b []byte, name string) (*parser, error) {
 	s, err := newScanner(b, name)
 	if err != nil {
 		return nil, err
@@ -48,6 +51,7 @@ func newParser(b []byte, name string) (*parser, error) {
 
 	return &parser{
 		scanner: s,
+		task:    t,
 		universe: scope{
 			m: map[string]node{
 				"boolean": &boolean{},
@@ -55,11 +59,11 @@ func newParser(b []byte, name string) (*parser, error) {
 				"integer": &integer{},
 				"real":    &real{},
 				"true": &constantDefinition{
-					ident:    &tok{ch: IDENTIFIER, src: "false"},
+					ident:    &tok{ch: IDENTIFIER, src: "true"},
 					constant: &constant{op: newBooleanOperand(false)},
 				},
 				"false": &constantDefinition{
-					ident:    &tok{ch: IDENTIFIER, src: "true"},
+					ident:    &tok{ch: IDENTIFIER, src: "false"},
 					constant: &constant{op: newBooleanOperand(true)},
 				},
 			},
@@ -1076,16 +1080,21 @@ type functionHeading struct {
 	list     []*formalParameterSection
 	colon    *tok
 	*typeNode
+	typ
 }
 
 func (p *parser) functionHeading(s *scope) *functionHeading {
-	return &functionHeading{
-		p.mustShift(FUNCTION),
-		p.mustShift(IDENTIFIER),
-		p.formalParameterList(s),
-		p.mustShift(':'),
-		p.typeNode(s),
+	r := &functionHeading{
+		function: p.mustShift(FUNCTION),
+		ident:    p.mustShift(IDENTIFIER),
+		list:     p.formalParameterList(s),
+		colon:    p.mustShift(':'),
+		typeNode: p.typeNode(s),
 	}
+	if r.typ = r.typeNode.typ; r.typ == nil {
+		p.err(r.function, "function type not resolved")
+	}
+	return r
 }
 
 // ProcedureDeclaration = ProcedureHeading ";" Block |
@@ -1176,6 +1185,7 @@ func (p *parser) formalParameterList(s *scope) (r []*formalParameterSection) {
 type formalParameterSection struct {
 	*valueParameterSpecification
 	*variableParameterSpecification
+	typ
 }
 
 func (n *formalParameterSection) names() []*tok {
@@ -1193,13 +1203,21 @@ func (n *formalParameterSection) isCompatible(m *formalParameterSection) bool {
 func (p *parser) formalParameterSection(s *scope) *formalParameterSection {
 	switch p.c().ch {
 	case VAR:
-		return &formalParameterSection{variableParameterSpecification: p.variableParameterSpecification(s)}
+		r := &formalParameterSection{variableParameterSpecification: p.variableParameterSpecification(s)}
+		if r.typ = r.variableParameterSpecification.typ; r.typ == nil {
+			p.err(p.c(), "type of formal paramater section not determined")
+		}
+		return r
 	case PROCEDURE:
 		p.err(p.c(), "procedure parameters not supported")
 	case FUNCTION:
 		p.err(p.c(), "functional parameters not supported")
 	case IDENTIFIER:
-		return &formalParameterSection{valueParameterSpecification: p.valueParameterSpecification(s)}
+		r := &formalParameterSection{valueParameterSpecification: p.valueParameterSpecification(s)}
+		if r.typ = r.valueParameterSpecification.typ; r.typ == nil {
+			p.err(p.c(), "type of formal paramater section not determined")
+		}
+		return r
 	default:
 		p.err(p.c(), "unexpected %q, expected value/variable/procedural/functional parameter specification", p.c().src)
 	}
@@ -1214,15 +1232,19 @@ type variableParameterSpecification struct {
 	list  []*tok
 	colon *tok
 	*typeNode
+	typ
 }
 
 func (p *parser) variableParameterSpecification(s *scope) *variableParameterSpecification {
-	return &variableParameterSpecification{
-		p.mustShift(VAR),
-		p.identifierList(),
-		p.mustShift(':'),
-		p.typeNode(s),
+	r := &variableParameterSpecification{
+		var_:     p.mustShift(VAR),
+		list:     p.identifierList(),
+		colon:    p.mustShift(':'),
+		typeNode: p.typeNode(s),
 	}
+	//TODO mark as variable type
+	r.typ = r.typeNode.typ
+	return r
 }
 
 // ValueParameterSpecification = IdentifierList ":" Type .
@@ -1230,14 +1252,17 @@ type valueParameterSpecification struct {
 	list  []*tok
 	colon *tok
 	*typeNode
+	typ
 }
 
 func (p *parser) valueParameterSpecification(s *scope) *valueParameterSpecification {
-	return &valueParameterSpecification{
-		p.identifierList(),
-		p.mustShift(':'),
-		p.typeNode(s),
+	r := &valueParameterSpecification{
+		list:     p.identifierList(),
+		colon:    p.mustShift(':'),
+		typeNode: p.typeNode(s),
 	}
+	r.typ = r.typeNode.typ
+	return r
 }
 
 // VariableDeclarationPart = [ "var" VariableDeclaration ";" { VariableDeclaration ";" } ] .
@@ -1272,15 +1297,19 @@ type variableDeclaration struct {
 	list  []*tok
 	colon *tok
 	*typeNode
+	typ
 }
 
 func (n *variableDeclaration) Position() token.Position { return n.list[0].Position() }
 
 func (p *parser) variableDeclaration(s *scope) *variableDeclaration {
 	r := &variableDeclaration{
-		p.identifierList(),
-		p.mustShift(':'),
-		p.typeNode(s),
+		list:     p.identifierList(),
+		colon:    p.mustShift(':'),
+		typeNode: p.typeNode(s),
+	}
+	if r.typ = r.typeNode.typ; r.typ == nil {
+		p.err(r.list[0], "variable type not resolved: %s", r.list[0].src)
 	}
 	for _, v := range r.list {
 		s.declare(p, r, v.src)
@@ -1326,8 +1355,7 @@ func (p *parser) typeDefinition(s *scope) *typeDefinition {
 		typeNode: p.typeNode(s),
 	}
 	s.declare(p, r, r.ident.src)
-	r.typ = r.typeNode.typ
-	if r.typ == nil {
+	if r.typ = r.typeNode.typ; r.typ == nil {
 		p.err(r.ident, "type not resolved: %s", r.ident.src)
 	}
 	return r
@@ -1403,7 +1431,9 @@ func (p *parser) unpackedStructuredType(s *scope) *unpackedStructuredType {
 		r.typ = r.recordType.typ
 		return r
 	case ARRAY:
-		return &unpackedStructuredType{arrayType: p.arrayType(s)}
+		r := &unpackedStructuredType{arrayType: p.arrayType(s)}
+		r.typ = r.arrayType.typ
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected arary type or record type or set type or file type", p.c().src)
@@ -1419,17 +1449,32 @@ type arrayType struct {
 	rbrace *tok
 	of     *tok
 	*typeNode
+	typ
 }
 
 func (p *parser) arrayType(s *scope) *arrayType {
-	return &arrayType{
-		p.mustShift(ARRAY),
-		p.mustShift('['),
-		p.typeList(s),
-		p.mustShift(']'),
-		p.mustShift(OF),
-		p.typeNode(s),
+	r := &arrayType{
+		array:    p.mustShift(ARRAY),
+		lbrace:   p.mustShift('['),
+		list:     p.typeList(s),
+		rbrace:   p.mustShift(']'),
+		of:       p.mustShift(OF),
+		typeNode: p.typeNode(s),
 	}
+	for _, v := range r.list {
+		if v.typ == nil {
+			p.err(r, "array dimension type not resolved")
+			return r
+		}
+	}
+
+	if r.typeNode.typ == nil {
+		p.err(r, "array element type not resolved")
+		return r
+	}
+
+	r.typ = newArray(r.array, r.list, r.typeNode.typ)
+	return r
 }
 
 func (p *parser) typeList(s *scope) (r []*typeNode) {
@@ -1454,7 +1499,10 @@ func (p *parser) recordType(s *scope) *recordType {
 		fieldList: p.fieldList(s),
 		end:       p.mustShift(END),
 	}
-	r.typ = newRecord(r.fieldList)
+	var err error
+	if r.typ, err = newRecord(p.task.goos, p.task.goarch, r.fieldList); err != nil {
+		p.err(r.record, "compute layout: %v", err)
+	}
 	return r
 }
 
@@ -1462,6 +1510,21 @@ func (p *parser) recordType(s *scope) *recordType {
 type fieldList struct {
 	fixedPart []*recordSection
 	*variantPart
+}
+
+func (n *fieldList) c(w strutil.Formatter) {
+	w.Format("struct {%i")
+	for _, v := range n.fixedPart {
+		w.Format("\n")
+		v.c(w)
+		w.Format(";")
+	}
+	if n.variantPart != nil {
+		w.Format("\n")
+		n.variantPart.c(w)
+		w.Format(";")
+	}
+	w.Format("%u\n}")
 }
 
 func (p *parser) fieldList(s *scope) *fieldList {
@@ -1513,10 +1576,26 @@ type variantPart struct {
 	list []*variant
 }
 
+func (n *variantPart) c(w strutil.Formatter) {
+	if n == nil {
+		return
+	}
+
+	w.Format("%s\t%s;", n.variantSelector.typ.cName(), strings.ToUpper(n.variantSelector.tagType.src))
+	w.Format("\nunion {%i")
+	for _, v := range n.list {
+		w.Format("\n")
+		v.fieldList.c(w)
+		w.Format(";")
+	}
+	w.Format("%u\n}")
+
+}
+
 func (p *parser) variantPart(s *scope) *variantPart {
 	return &variantPart{
 		p.mustShift(CASE),
-		p.variantSelector(),
+		p.variantSelector(s),
 		p.mustShift(OF),
 		p.variantList(s),
 	}
@@ -1574,15 +1653,32 @@ type variantSelector struct {
 	tagField *tok
 	colon    *tok
 	tagType  *tok
+	typ
 }
 
-func (p *parser) variantSelector() *variantSelector {
+func (p *parser) variantSelector(s *scope) *variantSelector {
 	tok := p.mustShift(IDENTIFIER)
 	switch p.c().ch {
 	case ':':
 		p.err(tok, "tag fields not supported")
 	default:
-		return &variantSelector{tagType: tok}
+		r := &variantSelector{tagType: tok}
+		_, n := s.find(r.tagType.src)
+		switch x := n.(type) {
+		case nil:
+			p.err(r.tagType, "undefined: %s", r.tagType.src)
+		case *typeDefinition:
+			r.typ = x.typ
+			switch x := r.typ.(type) { //TODO-
+			case *subrange:
+				// ok
+			default:
+				panic(todo("%v: %T", r.tagType, x))
+			}
+		default:
+			p.err(r.tagType, "not a type: %s", r.tagType.src)
+		}
+		return r
 	}
 
 	p.shift()
@@ -1619,6 +1715,23 @@ type recordSection struct {
 	colon *tok
 	*typeNode
 	typ
+}
+
+func (n *recordSection) c(w strutil.Formatter) {
+	a := strings.Split(n.typ.cName(), "\n")
+	for i, v := range a {
+		w.Format("%s", v)
+		if i != len(a)-1 {
+			w.Format("\n")
+		}
+	}
+	w.Format("\t")
+	for i, v := range n.list {
+		w.Format("%s", strings.ToUpper(v.src))
+		if i != len(n.list)-1 {
+			w.Format(", ")
+		}
+	}
 }
 
 func (p *parser) recordSection(s *scope) *recordSection {

@@ -60,11 +60,11 @@ func newParser(t *task, b []byte, name string) (*parser, error) {
 				"real":    &real{},
 				"true": &constantDefinition{
 					ident:    &tok{ch: IDENTIFIER, src: "true"},
-					constant: &constant{op: newBooleanOperand(false)},
+					constant: &constant{op: newBooleanOperand(true)},
 				},
 				"false": &constantDefinition{
 					ident:    &tok{ch: IDENTIFIER, src: "false"},
-					constant: &constant{op: newBooleanOperand(true)},
+					constant: &constant{op: newBooleanOperand(false)},
 				},
 			},
 		},

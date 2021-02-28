@@ -54,4 +54,4 @@ todo:
 	@grep -nir $(grep) 'work.*progress' || true
 
 stringer.go: scanner.go
-	stringer -output stringer.go -linecomment -type=char
+	stringer -output stringer.go -linecomment -type=ch

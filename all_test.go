@@ -79,6 +79,12 @@ func testMain(m *testing.M) int {
 func TestScanner(t *testing.T) {
 	task := newTask(os.Args)
 	task.in = "tex.web"
+	var err error
+	task.changeFile, err = filepath.Abs("changefile.ch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	task.tempDir = tempDir
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
@@ -98,7 +104,7 @@ func TestScanner(t *testing.T) {
 	var toks int
 	for {
 		tok := s.scan()
-		if tok.char < 0 {
+		if tok.ch < 0 {
 			break
 		}
 
@@ -114,6 +120,12 @@ func TestScanner(t *testing.T) {
 func TestParser(t *testing.T) {
 	task := newTask(os.Args)
 	task.in = "tex.web"
+	var err error
+	task.changeFile, err = filepath.Abs("changefile.ch")
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	task.tempDir = tempDir
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {

@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-type char rune
+type ch rune
 
-func (l char) str() string {
+func (l ch) str() string {
 	if l < AND || l > WITH {
 		return fmt.Sprintf("%#U", l)
 	}
@@ -21,54 +21,54 @@ func (l char) str() string {
 }
 
 const (
-	AND          char = iota + 0xe000 // and
-	ARRAY                             // array
-	ASSIGN                            // assign
-	BEGIN                             // begin
-	CASE                              // case
-	CONST                             // const
-	DD                                // ..
-	DIV                               // div
-	DO                                // do
-	DOWNTO                            // downto
-	ELSE                              // else
-	END                               // end
-	FILE                              // file
-	FOR                               // for
-	FUNCTION                          // function
-	GE                                // >=
-	GOTO                              // goto
-	IDENTIFIER                        // identifier
-	IF                                // if
-	IN                                // in
-	INT_LITERAL                       // integer literal
-	LABEL                             // label
-	LE                                // <=
-	MOD                               // mod
-	NE                                // <>
-	NIL                               // nil
-	NOT                               // not
-	OF                                // of
-	OR                                // or
-	PACKED                            // packed
-	PROCEDURE                         // procedure
-	PROGRAM                           // program
-	REAL_LITERAL                      // real literal
-	RECORD                            // record
-	REPEAT                            // repeat
-	SEP                               // separator
-	SET                               // set
-	STR_LITERAL                       // string literal
-	THEN                              // then
-	TO                                // to
-	TYPE                              // type
-	UNTIL                             // until
-	VAR                               // var
-	WHILE                             // while
-	WITH                              // with
+	AND          ch = iota + 0xe000 // and
+	ARRAY                           // array
+	ASSIGN                          // assign
+	BEGIN                           // begin
+	CASE                            // case
+	CONST                           // const
+	DD                              // ..
+	DIV                             // div
+	DO                              // do
+	DOWNTO                          // downto
+	ELSE                            // else
+	END                             // end
+	FILE                            // file
+	FOR                             // for
+	FUNCTION                        // function
+	GE                              // >=
+	GOTO                            // goto
+	IDENTIFIER                      // identifier
+	IF                              // if
+	IN                              // in
+	INT_LITERAL                     // integer literal
+	LABEL                           // label
+	LE                              // <=
+	MOD                             // mod
+	NE                              // <>
+	NIL                             // nil
+	NOT                             // not
+	OF                              // of
+	OR                              // or
+	PACKED                          // packed
+	PROCEDURE                       // procedure
+	PROGRAM                         // program
+	REAL_LITERAL                    // real literal
+	RECORD                          // record
+	REPEAT                          // repeat
+	SEP                             // separator
+	SET                             // set
+	STR_LITERAL                     // string literal
+	THEN                            // then
+	TO                              // to
+	TYPE                            // type
+	UNTIL                           // until
+	VAR                             // var
+	WHILE                           // while
+	WITH                            // with
 )
 
-var keywords = map[string]char{
+var keywords = map[string]ch{
 	"and":       AND,
 	"array":     ARRAY,
 	"begin":     BEGIN,
@@ -111,7 +111,7 @@ type node interface {
 }
 
 type tok struct {
-	char char
+	ch
 	file *token.File
 	pos  token.Pos
 	sep  string
@@ -123,7 +123,7 @@ func (t *tok) Position() token.Position {
 }
 
 func (t *tok) String() string {
-	return fmt.Sprintf("%v: %q %s", t.Position(), t.src, t.char.str())
+	return fmt.Sprintf("%v: %q %s", t.Position(), t.src, t.ch.str())
 }
 
 type scanner struct {
@@ -134,6 +134,8 @@ type scanner struct {
 	s    string
 	sep  string
 	si   int // current index into b
+
+	allErrors bool
 }
 
 func newScanner(b []byte, name string) (*scanner, error) {
@@ -165,21 +167,21 @@ func (s *scanner) errList() error {
 	return fmt.Errorf("%s", strings.Join(s.errs, "\n"))
 }
 
-func (s *scanner) c() char { return char(s.s[s.si]) }
+func (s *scanner) c() ch { return ch(s.s[s.si]) }
 
-func (s *scanner) post() char {
+func (s *scanner) post() ch {
 	r := s.s[s.si]
 	if r != 0 {
 		s.si++
 	}
-	return char(r)
+	return ch(r)
 }
 
-func (s *scanner) pre() char {
+func (s *scanner) pre() ch {
 	if s.s[s.si] != 0 {
 		s.si++
 	}
-	return char(s.s[s.si])
+	return ch(s.s[s.si])
 }
 
 func (s *scanner) position() token.Position {
@@ -187,6 +189,10 @@ func (s *scanner) position() token.Position {
 }
 
 func (s *scanner) err(msg string, args ...interface{}) {
+	if !s.allErrors && len(s.errs) == 10 {
+		return
+	}
+
 	p := fmt.Sprintf("%v: ", s.position())
 	msg = fmt.Sprintf(p+msg, args...)
 	trc("scanner err: %v", msg)
@@ -207,9 +213,9 @@ func (s *scanner) scan() (r *tok) {
 		r.src = s.s[si0:s.si]
 		s.last = r
 		s.sep = ""
-		if r.char == IDENTIFIER {
+		if r.ch == IDENTIFIER {
 			if x, ok := keywords[strings.ToLower(r.src)]; ok {
-				r.char = x
+				r.ch = x
 			}
 		}
 	}()
@@ -226,7 +232,7 @@ more:
 	case isIDFirst(c):
 		for isIDNext(s.pre()) {
 		}
-		return &tok{char: IDENTIFIER}
+		return &tok{ch: IDENTIFIER}
 	case isDigit(c):
 		for {
 			switch c := s.pre(); {
@@ -235,7 +241,7 @@ more:
 			case c == '.':
 				if s.pre() == '.' {
 					s.si--
-					return &tok{char: INT_LITERAL}
+					return &tok{ch: INT_LITERAL}
 				}
 
 				for {
@@ -248,12 +254,12 @@ more:
 					case 'e', 'E':
 						panic(todo("%#+U", c))
 					default:
-						return &tok{char: REAL_LITERAL}
+						return &tok{ch: REAL_LITERAL}
 					}
 
 				}
 			default:
-				return &tok{char: INT_LITERAL}
+				return &tok{ch: INT_LITERAL}
 			}
 		}
 	}
@@ -261,14 +267,14 @@ more:
 	switch c {
 	case ';', ',', '=', '(', ')', '+', '-', '*', '/', '[', ']', '^':
 		s.post()
-		return &tok{char: c}
+		return &tok{ch: c}
 	case ':':
 		if s.pre() == '=' {
 			s.post()
-			return &tok{char: ASSIGN}
+			return &tok{ch: ASSIGN}
 		}
 
-		return &tok{char: c}
+		return &tok{ch: c}
 	case '\'':
 		for {
 			switch s.pre() {
@@ -277,37 +283,37 @@ more:
 					break
 				}
 
-				return &tok{char: STR_LITERAL}
+				return &tok{ch: STR_LITERAL}
 			case 0:
 				s.err("unterminated comment")
-				return &tok{char: -1}
+				return &tok{ch: -1}
 			}
 		}
 	case '.':
 		if s.pre() == '.' {
 			s.post()
-			return &tok{char: DD}
+			return &tok{ch: DD}
 		}
 
-		return &tok{char: c}
+		return &tok{ch: c}
 	case '<':
 		switch s.pre() {
 		case '=':
 			s.post()
-			return &tok{char: LE}
+			return &tok{ch: LE}
 		case '>':
 			s.post()
-			return &tok{char: NE}
+			return &tok{ch: NE}
 		}
 
-		return &tok{char: c}
+		return &tok{ch: c}
 	case '>':
 		if s.pre() == '=' {
 			s.post()
-			return &tok{char: GE}
+			return &tok{ch: GE}
 		}
 
-		return &tok{char: c}
+		return &tok{ch: c}
 	case '{':
 		for {
 			switch s.pre() {
@@ -315,25 +321,25 @@ more:
 				s.file.AddLine(s.si + 1)
 			case '}':
 				s.post()
-				return &tok{char: SEP}
+				return &tok{ch: SEP}
 			case 0:
 				s.err("unterminated comment")
-				return &tok{char: -1}
+				return &tok{ch: -1}
 			}
 		}
 	case 0:
 		s.pos--
-		return &tok{char: -1}
+		return &tok{ch: -1}
 	default:
 		panic(todo("%v: %#+U", s.position(), s.c()))
 	}
 }
 
-func isDigit(c char) bool   { return c >= '0' && c <= '9' }
-func isIDFirst(c char) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
-func isIDNext(c char) bool  { return isIDFirst(c) || c >= '0' && c <= '9' }
+func isDigit(c ch) bool   { return c >= '0' && c <= '9' }
+func isIDFirst(c ch) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' }
+func isIDNext(c ch) bool  { return isIDFirst(c) || c >= '0' && c <= '9' }
 
-func (s *scanner) isSep(c char) bool {
+func (s *scanner) isSep(c ch) bool {
 	switch c {
 	case '\n':
 		s.file.AddLine(s.si + 1)

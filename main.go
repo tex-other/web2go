@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:generate stringer -output stringer.go -linecomment -type=char
+//go:generate stringer -output stringer.go -linecomment -type=ch
 
 // Command web2go is an attempt to mechanically translate tex.web to Go. (Work
 // in progress.)
@@ -12,8 +12,8 @@
 //	% Version 3.141592653 was similar but more extensive (January 2021)
 //
 // and will probably crash on any other version or modification of it.  It's a
-// non-goal to handle anything else than this one file with this single
-// version.
+// non-goal, at this stage, to handle anything else than this one file of this
+// single version.
 //
 // Installation
 //
@@ -69,7 +69,7 @@
 //
 // Options
 //
-// Flags that adjust program begavior
+// Flags that adjust program behavior
 //
 // 	-o output-file
 //
@@ -91,6 +91,10 @@
 // If the input-file is .web or .p, format the .p file using ptop to produce a
 // .pas file that will be the input of the transpiler.  Requires ptop to be
 // installed.
+//
+//	-e
+//
+// Show all errors, if any.
 //
 // References
 //
@@ -176,6 +180,7 @@ func trc(s string, args ...interface{}) string { //TODO-
 
 func main() {
 	task := newTask(os.Args)
+	flag.BoolVar(&task.e, "e", false, "show all errors")
 	flag.BoolVar(&task.ptop, "ptop", false, "format .p to .pas")
 	flag.StringVar(&task.o, "o", "", ".go output file")
 	flag.StringVar(&task.p, "p", "", ".p output file")
@@ -197,14 +202,16 @@ func main() {
 }
 
 type task struct {
-	args    []string
-	cleanup []func()
-	in      string
-	o       string
-	p       string
-	pas     string
-	tempDir string
+	args       []string
+	changeFile string
+	cleanup    []func()
+	in         string
+	o          string
+	p          string
+	pas        string
+	tempDir    string
 
+	e    bool
 	ptop bool
 }
 
@@ -251,7 +258,11 @@ func (t *task) web2p() ([]byte, error) {
 		return nil, err
 	}
 
-	if b, err = exec.Command(tangle, t.in).CombinedOutput(); err != nil {
+	args := []string{t.in}
+	if t.changeFile != "" {
+		args = append(args, t.changeFile)
+	}
+	if b, err = exec.Command(tangle, args...).CombinedOutput(); err != nil {
 		return b, err
 	}
 

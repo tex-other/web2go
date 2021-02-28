@@ -32,6 +32,7 @@ type parser struct {
 	*scanner
 	tok      *tok // current token if not nil and ungetBuf is nil
 	ungetBuf *tok // current token if not nil
+	universe scope
 
 	debug          bool
 	overflowCheck  bool
@@ -45,10 +46,32 @@ func newParser(b []byte, name string) (*parser, error) {
 		return nil, err
 	}
 
-	return &parser{scanner: s}, nil
+	return &parser{
+		scanner: s,
+		universe: scope{
+			m: map[string]node{
+				"boolean": &boolean{},
+				"char":    &char{},
+				"integer": &integer{},
+				"real":    &real{},
+				"true": &constantDefinition{
+					ident:    &tok{ch: IDENTIFIER, src: "false"},
+					constant: &constant{op: newBooleanOperand(false)},
+				},
+				"false": &constantDefinition{
+					ident:    &tok{ch: IDENTIFIER, src: "true"},
+					constant: &constant{op: newBooleanOperand(true)},
+				},
+			},
+		},
+	}, nil
 }
 
 func (p *parser) err(n node, msg string, args ...interface{}) {
+	if !p.allErrors && len(p.errs) == 10 {
+		return
+	}
+
 	pos := fmt.Sprintf("%v: ", n.Position())
 	msg = fmt.Sprintf(pos+msg, args...)
 	p.errs = append(p.errs, msg)
@@ -57,7 +80,7 @@ func (p *parser) err(n node, msg string, args ...interface{}) {
 func (p *parser) c() (r *tok) {
 	for {
 		tok := p.c0()
-		if tok.char != SEP {
+		if tok.ch != SEP {
 			return tok
 		}
 
@@ -162,8 +185,8 @@ func (p *parser) unget(tok *tok) {
 	panic(todop(p, "internal error"))
 }
 
-func (p *parser) must(ch char) (tok *tok) {
-	if tok = p.c(); tok.char == ch {
+func (p *parser) must(ch ch) (tok *tok) {
+	if tok = p.c(); tok.ch == ch {
 		return tok
 	}
 
@@ -171,7 +194,7 @@ func (p *parser) must(ch char) (tok *tok) {
 	return nil
 }
 
-func (p *parser) mustShift(ch char) *tok {
+func (p *parser) mustShift(ch ch) *tok {
 	tok := p.must(ch)
 	p.shift()
 	return tok
@@ -199,12 +222,39 @@ func (s *scope) declare(p *parser, n node, nm string) {
 		m = map[string]node{}
 		s.m = m
 	}
-	if ex := m[nm]; ex != nil {
+	switch ex := m[nm].(type) {
+	case nil:
+		m[nm] = n
+	case *procedureDeclaration:
+		if new, ok := n.(*procedureDeclaration); ok {
+			if ex.forward != nil && new.isCompatible(ex) {
+				m[nm] = n
+				return
+			}
+		}
+	case *functionDeclaration:
+		if new, ok := n.(*functionDeclaration); ok {
+			if ex.forward != nil && new.isCompatible(ex) {
+				m[nm] = n
+				return
+			}
+		}
+	default:
 		p.err(n, "%s redeclared, previous declaration at %v:", nm, ex.Position())
-		return
 	}
+}
 
-	m[nm] = n
+func (s *scope) get(nm string) node { return s.m[strings.ToLower(nm)] }
+
+func (s *scope) find(nm string) (*scope, node) {
+	for s != nil {
+		if n := s.get(nm); n != nil {
+			return s, n
+		}
+
+		s = s.parent
+	}
+	return nil, nil
 }
 
 // Program = ProgramHeading ";" Block "." .
@@ -218,6 +268,7 @@ type program struct {
 
 func (p *parser) program() *program {
 	var r program
+	r.scope.parent = &p.universe
 	r.programHeading = p.programHeading()
 	r.semi = p.mustShift(';')
 	r.block = p.block(&r.scope)
@@ -244,7 +295,7 @@ type programParameterList struct{}
 
 // ProgramParameterList = "(" IdentifierList ")" .
 func (p *parser) programParameterList() *programParameterList {
-	if p.c().char == '(' {
+	if p.c().ch == '(' {
 		p.err(p.c(), "ProgramParameterList not supported")
 		p.shift()
 	}
@@ -295,9 +346,9 @@ func (p *parser) compoundStatement(s *scope) *compoundStatement {
 // StatementSequence = Statement { ";" Statement} .
 func (p *parser) statementList(s *scope) (r []*statement) {
 	r = []*statement{p.statement(s)}
-	for p.c().char == ';' {
+	for p.c().ch == ';' {
 		p.shift()
-		switch p.c().char {
+		switch p.c().ch {
 		case UNTIL, ELSE, END:
 			return r
 		}
@@ -316,11 +367,11 @@ type statement struct {
 
 func (p *parser) statement(s *scope) *statement {
 	var label *tok
-	if p.c().char == INT_LITERAL {
+	if p.c().ch == INT_LITERAL {
 		label = p.shift()
 		p.mustShift(':')
 	}
-	switch p.c().char {
+	switch p.c().ch {
 	case BEGIN, IF, WHILE, REPEAT, FOR, WITH, CASE:
 		return &statement{
 			label:                label,
@@ -343,7 +394,7 @@ type structuredStatmenent struct {
 }
 
 func (p *parser) structuredStatmenent(s *scope) *structuredStatmenent {
-	switch p.c().char {
+	switch p.c().ch {
 	case FOR, WHILE, REPEAT:
 		return &structuredStatmenent{repetitiveStatement: p.repetitiveStatement(s)}
 	case BEGIN:
@@ -351,6 +402,7 @@ func (p *parser) structuredStatmenent(s *scope) *structuredStatmenent {
 	case CASE, IF:
 		return &structuredStatmenent{conditionalStatement: p.conditionalStatement(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected compound statement or conditional statement or repetitive statement or with statement", p.c().src)
 	p.shift()
 	return nil
@@ -363,12 +415,13 @@ type conditionalStatement struct {
 }
 
 func (p *parser) conditionalStatement(s *scope) *conditionalStatement {
-	switch p.c().char {
+	switch p.c().ch {
 	case CASE:
 		return &conditionalStatement{caseStatement: p.caseStatement(s)}
 	case IF:
 		return &conditionalStatement{ifStatement: p.ifStatement(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected if statement or case statement", p.c().src)
 	p.shift()
 	return nil
@@ -388,11 +441,11 @@ type ifStatement struct {
 func (p *parser) ifStatement(s *scope) *ifStatement {
 	r := &ifStatement{
 		if_:        p.mustShift(IF),
-		expression: p.expression(),
+		expression: p.expression(s),
 		then:       p.mustShift(THEN),
 		statement:  p.statement(s),
 	}
-	if p.c().char == ELSE {
+	if p.c().ch == ELSE {
 		r.else_ = p.shift()
 		r.elseStatement = p.statement(s)
 	}
@@ -414,7 +467,7 @@ type caseStatement struct {
 func (p *parser) caseStatement(s *scope) *caseStatement {
 	return &caseStatement{
 		p.mustShift(CASE),
-		p.expression(),
+		p.expression(s),
 		p.mustShift(OF),
 		p.caseList(s),
 		p.semiOpt(),
@@ -423,7 +476,7 @@ func (p *parser) caseStatement(s *scope) *caseStatement {
 }
 
 func (p *parser) semiOpt() *tok {
-	if p.c().char == ';' {
+	if p.c().ch == ';' {
 		return p.shift()
 	}
 
@@ -432,9 +485,9 @@ func (p *parser) semiOpt() *tok {
 
 func (p *parser) caseList(s *scope) (r []*case_) {
 	r = []*case_{p.case_(s)}
-	for p.c().char == ';' {
+	for p.c().ch == ';' {
 		semi := p.shift()
-		if p.c().char == END {
+		if p.c().ch == END {
 			p.unget(semi)
 			return r
 		}
@@ -444,26 +497,35 @@ func (p *parser) caseList(s *scope) (r []*case_) {
 	return r
 }
 
-// Case = Constant { "," Constant } ":" Statement .
+// Case = Constant { "," Constant } ":" Statement |
+//	"else" Statement .
 type case_ struct {
-	list  []*constant
-	colon *tok
+	list    []*constant
+	colon   *tok
+	elseTok *tok
 	*statement
 }
 
 func (p *parser) case_(s *scope) *case_ {
+	if p.c().ch == ELSE {
+		return &case_{
+			elseTok:   p.shift(),
+			statement: p.statement(s),
+		}
+	}
+
 	return &case_{
-		p.constantList(),
-		p.mustShift(':'),
-		p.statement(s),
+		list:      p.constantList(s),
+		colon:     p.mustShift(':'),
+		statement: p.statement(s),
 	}
 }
 
-func (p *parser) constantList() (r []*constant) {
-	r = []*constant{p.constant()}
-	for p.c().char == ',' {
+func (p *parser) constantList(s *scope) (r []*constant) {
+	r = []*constant{p.constant(s)}
+	for p.c().ch == ',' {
 		p.shift()
-		r = append(r, p.constant())
+		r = append(r, p.constant(s))
 	}
 	return r
 }
@@ -476,7 +538,7 @@ type repetitiveStatement struct {
 }
 
 func (p *parser) repetitiveStatement(s *scope) *repetitiveStatement {
-	switch p.c().char {
+	switch p.c().ch {
 	case FOR:
 		return &repetitiveStatement{forStatement: p.forStatement(s)}
 	case WHILE:
@@ -484,6 +546,7 @@ func (p *parser) repetitiveStatement(s *scope) *repetitiveStatement {
 	case REPEAT:
 		return &repetitiveStatement{repeatStatement: p.repeatStatement(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected while statement or repeat statement or for statement", p.c().src)
 	p.shift()
 	return nil
@@ -502,7 +565,7 @@ func (p *parser) repeatStatement(s *scope) *repeatStatement {
 		p.mustShift(REPEAT),
 		p.statementList(s),
 		p.mustShift(UNTIL),
-		p.expression(),
+		p.expression(s),
 	}
 }
 
@@ -517,7 +580,7 @@ type whileStatement struct {
 func (p *parser) whileStatement(s *scope) *whileStatement {
 	return &whileStatement{
 		p.mustShift(WHILE),
-		p.expression(),
+		p.expression(s),
 		p.mustShift(DO),
 		p.statement(s),
 	}
@@ -525,8 +588,8 @@ func (p *parser) whileStatement(s *scope) *whileStatement {
 
 // ForStatement = "for" ControlVariable ":=" InitialValue ( "to" | "downto" ) FinalValue "do" Statement .
 type forStatement struct {
-	for_       *tok
-	ident      *tok
+	for_ *tok
+	*identifier
 	assign     *tok
 	initial    *expression
 	toOrDownto *tok
@@ -538,21 +601,37 @@ type forStatement struct {
 func (p *parser) forStatement(s *scope) *forStatement {
 	return &forStatement{
 		p.mustShift(FOR),
-		p.mustShift(IDENTIFIER),
+		p.identifier(s),
 		p.mustShift(ASSIGN),
-		p.expression(),
+		p.expression(s),
 		p.toOrDownto(),
-		p.expression(),
+		p.expression(s),
 		p.mustShift(DO),
 		p.statement(s),
 	}
 }
 
+type identifier struct {
+	*tok
+	//TODO
+}
+
+func (p *parser) identifier(s *scope) *identifier {
+	tok := p.mustShift(IDENTIFIER)
+	if tok != nil {
+		if _, n := s.find(tok.src); n == nil {
+			p.err(tok, "undefined: %s", tok.src)
+		}
+	}
+	return &identifier{tok: tok}
+}
+
 func (p *parser) toOrDownto() *tok {
-	switch p.c().char {
+	switch p.c().ch {
 	case TO, DOWNTO:
 		return p.shift()
 	}
+
 	p.err(p.c(), "unexpected %q, expected 'to' or 'downto'", p.c().src)
 	p.shift()
 	return nil
@@ -566,22 +645,23 @@ type simpleStatement struct {
 }
 
 func (p *parser) simpleStatement(s *scope) *simpleStatement {
-	switch p.c().char {
+	switch p.c().ch {
 	case ';', END:
 		return &simpleStatement{}
 	case GOTO:
 		return &simpleStatement{gotoStatement: p.gotoStatement()}
 	case IDENTIFIER:
 		id := p.shift()
-		switch p.c().char {
+		switch p.c().ch {
 		case '(', ';', ELSE, END, UNTIL:
 			p.unget(id)
-			return &simpleStatement{procedureStatement: p.procedureStatement()}
+			return &simpleStatement{procedureStatement: p.procedureStatement(s)}
 		}
 
 		p.unget(id)
-		return &simpleStatement{assignmentStatement: p.assignmentStatement()}
+		return &simpleStatement{assignmentStatement: p.assignmentStatement(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	p.shift()
 	return nil
@@ -606,23 +686,23 @@ type procedureStatement struct {
 	list  []*arg
 }
 
-func (p *parser) procedureStatement() *procedureStatement {
+func (p *parser) procedureStatement(s *scope) *procedureStatement {
 	return &procedureStatement{
 		p.mustShift(IDENTIFIER),
-		p.argList(),
+		p.argList(s),
 	}
 }
 
-func (p *parser) argList() (r []*arg) {
-	if p.c().char != '(' {
+func (p *parser) argList(s *scope) (r []*arg) {
+	if p.c().ch != '(' {
 		return nil
 	}
 
 	p.shift()
-	r = []*arg{p.arg()}
-	for p.c().char == ',' {
+	r = []*arg{p.arg(s)}
+	for p.c().ch == ',' {
 		p.shift()
-		r = append(r, p.arg())
+		r = append(r, p.arg(s))
 	}
 	p.mustShift(')')
 	return r
@@ -636,14 +716,14 @@ type arg struct {
 	width2 *expression
 }
 
-func (p *parser) arg() *arg {
-	r := &arg{expression: p.expression()}
-	if p.c().char == ':' {
+func (p *parser) arg(s *scope) *arg {
+	r := &arg{expression: p.expression(s)}
+	if p.c().ch == ':' {
 		r.colon = p.shift()
-		r.width = p.expression()
-		if p.c().char == ':' {
+		r.width = p.expression(s)
+		if p.c().ch == ':' {
 			r.colon2 = p.shift()
-			r.width2 = p.expression()
+			r.width2 = p.expression(s)
 		}
 	}
 	return r
@@ -656,11 +736,11 @@ type assignmentStatement struct {
 	*expression
 }
 
-func (p *parser) assignmentStatement() *assignmentStatement {
+func (p *parser) assignmentStatement(s *scope) *assignmentStatement {
 	return &assignmentStatement{
-		p.variable(),
+		p.variable(s),
 		p.mustShift(ASSIGN),
-		p.expression(),
+		p.expression(s),
 	}
 }
 
@@ -671,12 +751,12 @@ type expression struct {
 	rhs   *simpleExpression
 }
 
-func (p *parser) expression() *expression {
-	r := &expression{simpleExpression: p.simpleExpression()}
-	switch p.c().char {
+func (p *parser) expression(s *scope) *expression {
+	r := &expression{simpleExpression: p.simpleExpression(s)}
+	switch p.c().ch {
 	case '=', NE, '<', LE, '>', GE, IN:
 		r.relOp = p.shift()
-		r.rhs = p.simpleExpression()
+		r.rhs = p.simpleExpression(s)
 	}
 	return r
 }
@@ -693,14 +773,14 @@ type termListItem struct {
 }
 
 // a*b*c = (a*b)*c
-func (p *parser) term() *term {
-	r := &term{factor: p.factor()}
+func (p *parser) term(s *scope) *term {
+	r := &term{factor: p.factor(s)}
 	for {
-		switch p.c().char {
+		switch p.c().ch {
 		case '*', '/', DIV, MOD, AND:
 			r.list = append(r.list, termListItem{
 				p.shift(),
-				p.factor(),
+				p.factor(s),
 			})
 		default:
 			return r
@@ -720,28 +800,29 @@ type factor struct {
 	not *factor
 }
 
-func (p *parser) factor() *factor {
-	switch p.c().char {
+func (p *parser) factor(s *scope) *factor {
+	switch p.c().ch {
 	case INT_LITERAL, STR_LITERAL, REAL_LITERAL:
 		return &factor{unsignedConstant: p.unsignedConstant()}
 	case IDENTIFIER:
 		id := p.shift()
-		if p.c().char == '(' {
+		if p.c().ch == '(' {
 			p.unget(id)
-			return &factor{functionDesignator: p.functionDesignator()}
+			return &factor{functionDesignator: p.functionDesignator(s)}
 		}
 
 		p.unget(id)
-		return &factor{variable: p.variable()}
+		return &factor{variable: p.variable(s)}
 	case '(':
 		p.shift()
-		r := &factor{expression: p.expression()}
+		r := &factor{expression: p.expression(s)}
 		p.mustShift(')')
 		return r
 	case NOT:
 		p.shift()
-		return &factor{not: p.factor()}
+		return &factor{not: p.factor(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected unsigned constant or varible or set constructor or 'not' or '( expression ')'", p.c().src)
 	p.shift()
 	return nil
@@ -753,20 +834,20 @@ type functionDesignator struct {
 	list  []*expression
 }
 
-func (p *parser) functionDesignator() *functionDesignator {
+func (p *parser) functionDesignator(s *scope) *functionDesignator {
 	return &functionDesignator{
 		p.mustShift(IDENTIFIER),
-		p.actualParameterList(),
+		p.actualParameterList(s),
 	}
 }
 
-func (p *parser) actualParameterList() (r []*expression) {
-	if p.c().char != '(' {
+func (p *parser) actualParameterList(s *scope) (r []*expression) {
+	if p.c().ch != '(' {
 		return nil
 	}
 
 	p.shift()
-	r = p.expressionList()
+	r = p.expressionList(s)
 	p.mustShift(')')
 	return r
 }
@@ -779,12 +860,13 @@ type unsignedConstant struct {
 }
 
 func (p *parser) unsignedConstant() *unsignedConstant {
-	switch p.c().char {
+	switch p.c().ch {
 	case INT_LITERAL, REAL_LITERAL:
 		return &unsignedConstant{unsignedNumber: p.unsignedNumber()}
 	case STR_LITERAL:
 		return &unsignedConstant{str: p.shift()}
 	}
+
 	p.err(p.c(), "unexpected %q, expected unsigned number or character string or identifier or 'nil'", p.c().src)
 	p.shift()
 	return nil
@@ -797,12 +879,13 @@ type unsignedNumber struct {
 }
 
 func (p *parser) unsignedNumber() *unsignedNumber {
-	switch p.c().char {
+	switch p.c().ch {
 	case INT_LITERAL:
 		return &unsignedNumber{int: p.shift()}
 	case REAL_LITERAL:
 		return &unsignedNumber{real: p.shift()}
 	}
+
 	p.err(p.c(), "unexpected %q, expected unsigned integer or unsigned real", p.c().src)
 	p.shift()
 	return nil
@@ -820,18 +903,18 @@ type simpleExpressionListItem struct {
 	*term
 }
 
-func (p *parser) simpleExpression() *simpleExpression {
+func (p *parser) simpleExpression(s *scope) *simpleExpression {
 	sign := p.sign()
 	r := &simpleExpression{
 		sign: sign,
-		term: p.term(),
+		term: p.term(s),
 	}
 	for {
-		switch p.c().char {
+		switch p.c().ch {
 		case '+', '-', OR:
 			r.list = append(r.list, simpleExpressionListItem{
 				p.shift(),
-				p.term(),
+				p.term(s),
 			})
 		default:
 			return r
@@ -839,11 +922,11 @@ func (p *parser) simpleExpression() *simpleExpression {
 	}
 }
 
-func (p *parser) expressionList() (r []*expression) {
-	r = []*expression{p.expression()}
-	for p.c().char == ',' {
+func (p *parser) expressionList(s *scope) (r []*expression) {
+	r = []*expression{p.expression(s)}
+	for p.c().ch == ',' {
 		p.shift()
-		r = append(r, p.expression())
+		r = append(r, p.expression(s))
 	}
 	return r
 }
@@ -851,19 +934,19 @@ func (p *parser) expressionList() (r []*expression) {
 // Variable = EntireVariable | ComponentVariable |
 //	IdentifiedVariable | BufferVariable .
 type variable struct {
-	entire *tok
+	*identifier
 	*componentVariable
 	deref *variable
 }
 
-func (p *parser) variable() (r *variable) {
-	switch p.c().char {
+func (p *parser) variable(s *scope) (r *variable) {
+	switch p.c().ch {
 	case IDENTIFIER:
-		r = &variable{entire: p.shift()}
+		r = &variable{identifier: p.identifier(s)}
 		for {
-			switch p.c().char {
+			switch p.c().ch {
 			case '[', '.':
-				r = &variable{componentVariable: p.componentVariable(r)}
+				r = &variable{componentVariable: p.componentVariable(s, r)}
 			case '^':
 				p.shift()
 				r = &variable{deref: r}
@@ -872,6 +955,7 @@ func (p *parser) variable() (r *variable) {
 			}
 		}
 	}
+
 	p.err(p.c(), "unexpected %q, expected variable identifier or component variable or identified variable of buffer variable", p.c().src)
 	p.shift()
 	return nil
@@ -883,13 +967,14 @@ type componentVariable struct {
 	*fieldDesignator
 }
 
-func (p *parser) componentVariable(v *variable) *componentVariable {
-	switch p.c().char {
+func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
+	switch p.c().ch {
 	case '[':
-		return &componentVariable{indexedVariable: p.indexedVariable(v)}
+		return &componentVariable{indexedVariable: p.indexedVariable(s, v)}
 	case '.':
 		return &componentVariable{fieldDesignator: p.fieldDesignator(v)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected indexed variable or field designator", p.c().src)
 	p.shift()
 	return nil
@@ -906,7 +991,7 @@ func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 	return &fieldDesignator{
 		v,
 		p.mustShift('.'),
-		p.mustShift(IDENTIFIER),
+		p.mustShift(IDENTIFIER), //TODO
 	}
 }
 
@@ -918,11 +1003,11 @@ type indexedVariable struct {
 	rbrace *tok
 }
 
-func (p *parser) indexedVariable(v *variable) *indexedVariable {
+func (p *parser) indexedVariable(s *scope, v *variable) *indexedVariable {
 	return &indexedVariable{
 		v,
 		p.mustShift('['),
-		p.expressionList(),
+		p.expressionList(s),
 		p.mustShift(']'),
 	}
 }
@@ -935,7 +1020,7 @@ type procedureAndFunctionDeclarationPart struct {
 
 func (p *parser) procedureAndFunctionDeclarationPart(s *scope) (r []*procedureAndFunctionDeclarationPart) {
 	for {
-		switch p.c().char {
+		switch p.c().ch {
 		case PROCEDURE:
 			r = append(r, &procedureAndFunctionDeclarationPart{procedureDeclaration: p.procedureDeclaration(s)})
 		case FUNCTION:
@@ -960,17 +1045,26 @@ type functionDeclaration struct {
 
 func (n *functionDeclaration) Position() token.Position { return n.functionHeading.function.Position() }
 
+func (n *functionDeclaration) isCompatible(m *functionDeclaration) bool {
+	panic(todo(""))
+}
+
 func (p *parser) functionDeclaration(s *scope) *functionDeclaration {
 	r := &functionDeclaration{scope: scope{parent: s}}
-	r.functionHeading = p.functionHeading()
+	r.functionHeading = p.functionHeading(s)
+	for _, v := range r.functionHeading.list {
+		for _, w := range v.names() {
+			r.scope.declare(p, w, w.src)
+		}
+	}
+	s.declare(p, r, r.functionHeading.ident.src)
 	r.semi = p.mustShift(';')
-	if t := p.c(); t.char == IDENTIFIER && strings.ToLower(t.src) == "forward" {
+	if t := p.c(); t.ch == IDENTIFIER && strings.ToLower(t.src) == "forward" {
 		r.forward = p.shift()
 		return r
 	}
 
 	r.block = p.block(&r.scope)
-	s.declare(p, r, r.functionHeading.ident.src)
 	return r
 }
 
@@ -980,16 +1074,16 @@ type functionHeading struct {
 	ident    *tok
 	list     []*formalParameterSection
 	colon    *tok
-	typ      *typ
+	typ      *typeNode
 }
 
-func (p *parser) functionHeading() *functionHeading {
+func (p *parser) functionHeading(s *scope) *functionHeading {
 	return &functionHeading{
 		p.mustShift(FUNCTION),
 		p.mustShift(IDENTIFIER),
-		p.formalParameterList(),
+		p.formalParameterList(s),
 		p.mustShift(':'),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
@@ -1008,17 +1102,26 @@ func (n *procedureDeclaration) Position() token.Position {
 	return n.procedureHeading.procedure.Position()
 }
 
+func (n *procedureDeclaration) isCompatible(m *procedureDeclaration) bool {
+	return n.procedureHeading.isCompatible(m.procedureHeading)
+}
+
 func (p *parser) procedureDeclaration(s *scope) *procedureDeclaration {
 	r := &procedureDeclaration{scope: scope{parent: s}}
-	r.procedureHeading = p.procedureHeading()
+	r.procedureHeading = p.procedureHeading(s)
+	for _, v := range r.procedureHeading.list {
+		for _, w := range v.names() {
+			r.scope.declare(p, w, w.src)
+		}
+	}
+	s.declare(p, r, r.procedureHeading.ident.src)
 	r.semi = p.mustShift(';')
-	if t := p.c(); t.char == IDENTIFIER && strings.ToLower(t.src) == "forward" {
+	if t := p.c(); t.ch == IDENTIFIER && strings.ToLower(t.src) == "forward" {
 		r.forward = p.shift()
 		return r
 	}
 
 	r.block = p.block(&r.scope)
-	s.declare(p, r, r.procedureHeading.ident.src)
 	return r
 }
 
@@ -1029,24 +1132,37 @@ type procedureHeading struct {
 	list      []*formalParameterSection
 }
 
-func (p *parser) procedureHeading() *procedureHeading {
+func (p *parser) procedureHeading(s *scope) *procedureHeading {
 	return &procedureHeading{
 		p.mustShift(PROCEDURE),
 		p.mustShift(IDENTIFIER),
-		p.formalParameterList(),
+		p.formalParameterList(s),
 	}
 }
 
-func (p *parser) formalParameterList() (r []*formalParameterSection) {
-	if p.c().char != '(' {
+func (n *procedureHeading) isCompatible(m *procedureHeading) bool {
+	if len(n.list) != len(m.list) {
+		return false
+	}
+
+	for i, v := range n.list {
+		if !v.isCompatible(m.list[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *parser) formalParameterList(s *scope) (r []*formalParameterSection) {
+	if p.c().ch != '(' {
 		return nil
 	}
 
 	p.shift()
-	r = []*formalParameterSection{p.formalParameterSection()}
-	for p.c().char == ';' {
+	r = []*formalParameterSection{p.formalParameterSection(s)}
+	for p.c().ch == ';' {
 		p.shift()
-		r = append(r, p.formalParameterSection())
+		r = append(r, p.formalParameterSection(s))
 	}
 	p.mustShift(')')
 	return r
@@ -1061,19 +1177,32 @@ type formalParameterSection struct {
 	*variableParameterSpecification
 }
 
-func (p *parser) formalParameterSection() *formalParameterSection {
-	switch p.c().char {
+func (n *formalParameterSection) names() []*tok {
+	if n.valueParameterSpecification != nil {
+		return n.valueParameterSpecification.list
+	}
+
+	return n.variableParameterSpecification.list
+}
+
+func (n *formalParameterSection) isCompatible(m *formalParameterSection) bool {
+	panic(todo(""))
+}
+
+func (p *parser) formalParameterSection(s *scope) *formalParameterSection {
+	switch p.c().ch {
 	case VAR:
-		return &formalParameterSection{variableParameterSpecification: p.variableParameterSpecification()}
+		return &formalParameterSection{variableParameterSpecification: p.variableParameterSpecification(s)}
 	case PROCEDURE:
 		p.err(p.c(), "procedure parameters not supported")
 	case FUNCTION:
 		p.err(p.c(), "functional parameters not supported")
 	case IDENTIFIER:
-		return &formalParameterSection{valueParameterSpecification: p.valueParameterSpecification()}
+		return &formalParameterSection{valueParameterSpecification: p.valueParameterSpecification(s)}
 	default:
 		p.err(p.c(), "unexpected %q, expected value/variable/procedural/functional parameter specification", p.c().src)
 	}
+
 	p.shift()
 	return nil
 }
@@ -1083,15 +1212,15 @@ type variableParameterSpecification struct {
 	var_  *tok
 	list  []*tok
 	colon *tok
-	*typ
+	*typeNode
 }
 
-func (p *parser) variableParameterSpecification() *variableParameterSpecification {
+func (p *parser) variableParameterSpecification(s *scope) *variableParameterSpecification {
 	return &variableParameterSpecification{
 		p.mustShift(VAR),
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
@@ -1099,14 +1228,14 @@ func (p *parser) variableParameterSpecification() *variableParameterSpecificatio
 type valueParameterSpecification struct {
 	list  []*tok
 	colon *tok
-	*typ
+	*typeNode
 }
 
-func (p *parser) valueParameterSpecification() *valueParameterSpecification {
+func (p *parser) valueParameterSpecification(s *scope) *valueParameterSpecification {
 	return &valueParameterSpecification{
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
@@ -1117,7 +1246,7 @@ type variableDeclarationPart struct {
 }
 
 func (p *parser) variableDeclarationPart(s *scope) *variableDeclarationPart {
-	if p.c().char != VAR {
+	if p.c().ch != VAR {
 		return nil
 	}
 
@@ -1130,7 +1259,7 @@ func (p *parser) variableDeclarationPart(s *scope) *variableDeclarationPart {
 func (p *parser) variableDeclarationList(s *scope) (r []*variableDeclaration) {
 	r = append(r, p.variableDeclaration(s))
 	p.mustShift(';')
-	for p.c().char == IDENTIFIER {
+	for p.c().ch == IDENTIFIER {
 		r = append(r, p.variableDeclaration(s))
 		p.mustShift(';')
 	}
@@ -1141,7 +1270,7 @@ func (p *parser) variableDeclarationList(s *scope) (r []*variableDeclaration) {
 type variableDeclaration struct {
 	list  []*tok
 	colon *tok
-	typ   *typ
+	typ   *typeNode
 }
 
 func (n *variableDeclaration) Position() token.Position { return n.list[0].Position() }
@@ -1150,7 +1279,7 @@ func (p *parser) variableDeclaration(s *scope) *variableDeclaration {
 	r := &variableDeclaration{
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(),
+		p.typ(s),
 	}
 	for _, v := range r.list {
 		s.declare(p, r, v.src)
@@ -1165,7 +1294,7 @@ type typeDefinitionPart struct {
 }
 
 func (p *parser) typeDefinitionPart(s *scope) *typeDefinitionPart {
-	if p.c().char != TYPE {
+	if p.c().ch != TYPE {
 		return nil
 	}
 
@@ -1179,38 +1308,39 @@ func (p *parser) typeDefinitionPart(s *scope) *typeDefinitionPart {
 type typeDefinition struct {
 	ident *tok
 	eq    *tok
-	typ   *typ
+	typ   *typeNode
 }
 
 func (n *typeDefinition) Position() token.Position { return n.ident.Position() }
 
 func (p *parser) typeDefinition(s *scope) *typeDefinition {
-	if p.c().char != IDENTIFIER {
+	if p.c().ch != IDENTIFIER {
 		return nil
 	}
 
 	r := &typeDefinition{
 		p.mustShift(IDENTIFIER),
 		p.mustShift('='),
-		p.typ(),
+		p.typ(s),
 	}
 	s.declare(p, r, r.ident.src)
 	return r
 }
 
 // Type = SimpleType | StructuredType | PointerType .
-type typ struct {
+type typeNode struct {
 	*simpleType
 	*structuredType
 }
 
-func (p *parser) typ() *typ {
-	switch p.c().char {
+func (p *parser) typ(s *scope) *typeNode {
+	switch p.c().ch {
 	case INT_LITERAL, IDENTIFIER, '-':
-		return &typ{simpleType: p.simpleType()}
+		return &typeNode{simpleType: p.simpleType(s)}
 	case PACKED, RECORD, FILE, ARRAY:
-		return &typ{structuredType: p.structuredType()}
+		return &typeNode{structuredType: p.structuredType(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected simple type or structured type or pointer type", p.c().src)
 	p.shift()
 	return nil
@@ -1222,16 +1352,16 @@ type structuredType struct {
 	*unpackedStructuredType
 }
 
-func (p *parser) structuredType() *structuredType {
-	if p.c().char == PACKED {
+func (p *parser) structuredType(s *scope) *structuredType {
+	if p.c().ch == PACKED {
 		return &structuredType{
 			packed:                 p.shift(),
-			unpackedStructuredType: p.unpackedStructuredType(),
+			unpackedStructuredType: p.unpackedStructuredType(s),
 		}
 	}
 
 	return &structuredType{
-		unpackedStructuredType: p.unpackedStructuredType(),
+		unpackedStructuredType: p.unpackedStructuredType(s),
 	}
 }
 
@@ -1242,15 +1372,16 @@ type unpackedStructuredType struct {
 	*recordType
 }
 
-func (p *parser) unpackedStructuredType() *unpackedStructuredType {
-	switch p.c().char {
+func (p *parser) unpackedStructuredType(s *scope) *unpackedStructuredType {
+	switch p.c().ch {
 	case FILE:
-		return &unpackedStructuredType{fileType: p.fileType()}
+		return &unpackedStructuredType{fileType: p.fileType(s)}
 	case RECORD:
-		return &unpackedStructuredType{recordType: p.recordType()}
+		return &unpackedStructuredType{recordType: p.recordType(s)}
 	case ARRAY:
-		return &unpackedStructuredType{arrayType: p.arrayType()}
+		return &unpackedStructuredType{arrayType: p.arrayType(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected arary type or record type or set type or file type", p.c().src)
 	p.shift()
 	return nil
@@ -1260,27 +1391,27 @@ func (p *parser) unpackedStructuredType() *unpackedStructuredType {
 type arrayType struct {
 	array  *tok
 	lbrace *tok
-	list   []*typ
+	list   []*typeNode
 	rbrace *tok
 	of     *tok
-	typ    *typ
+	typ    *typeNode
 }
 
-func (p *parser) arrayType() *arrayType {
+func (p *parser) arrayType(s *scope) *arrayType {
 	return &arrayType{
 		p.mustShift(ARRAY),
 		p.mustShift('['),
-		p.typeList(),
+		p.typeList(s),
 		p.mustShift(']'),
 		p.mustShift(OF),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
-func (p *parser) typeList() (r []*typ) {
-	r = append(r, p.typ())
-	for p.c().char == ',' {
-		r = append(r, p.typ())
+func (p *parser) typeList(s *scope) (r []*typeNode) {
+	r = append(r, p.typ(s))
+	for p.c().ch == ',' {
+		r = append(r, p.typ(s))
 	}
 	return r
 }
@@ -1292,10 +1423,10 @@ type recordType struct {
 	end *tok
 }
 
-func (p *parser) recordType() *recordType {
+func (p *parser) recordType(s *scope) *recordType {
 	return &recordType{
 		p.mustShift(RECORD),
-		p.fieldList(),
+		p.fieldList(s),
 		p.mustShift(END),
 	}
 }
@@ -1306,17 +1437,17 @@ type fieldList struct {
 	*variantPart
 }
 
-func (p *parser) fieldList() *fieldList {
-	switch p.c().char {
+func (p *parser) fieldList(s *scope) *fieldList {
+	switch p.c().ch {
 	case IDENTIFIER:
-		r := &fieldList{fixedPart: p.fixedPart()}
-		switch p.c().char {
+		r := &fieldList{fixedPart: p.fixedPart(s)}
+		switch p.c().ch {
 		case ';':
 			p.shift()
-			switch p.c().char {
+			switch p.c().ch {
 			case CASE:
-				r.variantPart = p.variantPart()
-				if p.c().char == ';' {
+				r.variantPart = p.variantPart(s)
+				if p.c().ch == ';' {
 					p.shift()
 				}
 				return r
@@ -1335,12 +1466,13 @@ func (p *parser) fieldList() *fieldList {
 			return nil
 		}
 	case CASE:
-		r := &fieldList{variantPart: p.variantPart()}
-		if p.c().char == ';' {
+		r := &fieldList{variantPart: p.variantPart(s)}
+		if p.c().ch == ';' {
 			p.shift()
 		}
 		return r
 	}
+
 	p.err(p.c(), "unexpected %q, expected fixed part or variant part", p.c().src)
 	p.shift()
 	return nil
@@ -1354,31 +1486,31 @@ type variantPart struct {
 	list []*variant
 }
 
-func (p *parser) variantPart() *variantPart {
+func (p *parser) variantPart(s *scope) *variantPart {
 	return &variantPart{
 		p.mustShift(CASE),
 		p.variantSelector(),
 		p.mustShift(OF),
-		p.variantList(),
+		p.variantList(s),
 	}
 }
 
 // Variant { ";" Variant }
-func (p *parser) variantList() (r []*variant) {
-	v := p.variant()
+func (p *parser) variantList(s *scope) (r []*variant) {
+	v := p.variant(s)
 	if v == nil {
 		return nil
 	}
 
 	r = []*variant{v}
-	for p.c().char == ';' {
+	for p.c().ch == ';' {
 		semi := p.shift()
-		if p.c().char == END {
+		if p.c().ch == END {
 			p.unget(semi)
 			break
 		}
 
-		r = append(r, p.variant())
+		r = append(r, p.variant(s))
 	}
 	return r
 }
@@ -1392,20 +1524,20 @@ type variant struct {
 	rparen *tok
 }
 
-func (p *parser) variant() *variant {
-	c := p.constant()
+func (p *parser) variant(s *scope) *variant {
+	c := p.constant(s)
 	if c == nil {
 		return nil
 	}
 
 	r := &variant{consts: []*constant{c}}
-	for p.c().char == ',' {
+	for p.c().ch == ',' {
 		p.shift()
-		r.consts = append(r.consts, p.constant())
+		r.consts = append(r.consts, p.constant(s))
 	}
 	r.colon = p.mustShift(':')
 	r.lparen = p.mustShift('(')
-	r.fieldList = p.fieldList()
+	r.fieldList = p.fieldList(s)
 	r.rparen = p.mustShift(')')
 	return r
 }
@@ -1419,32 +1551,33 @@ type variantSelector struct {
 
 func (p *parser) variantSelector() *variantSelector {
 	tok := p.mustShift(IDENTIFIER)
-	switch p.c().char {
+	switch p.c().ch {
 	case ':':
 		p.err(tok, "tag fields not supported")
 	default:
 		return &variantSelector{typ: tok}
 	}
+
 	p.shift()
 	return nil
 }
 
 // FixedPart = RecordSection { ";" RecordSection } .
-func (p *parser) fixedPart() []*recordSection {
-	rs := p.recordSection()
+func (p *parser) fixedPart(s *scope) []*recordSection {
+	rs := p.recordSection(s)
 	if rs == nil {
 		return nil
 	}
 
 	r := []*recordSection{rs}
-	for p.c().char == ';' {
+	for p.c().ch == ';' {
 		semi := p.shift()
-		if ch := p.c().char; ch == CASE || ch == END {
+		if ch := p.c().ch; ch == CASE || ch == END {
 			p.unget(semi)
 			break
 		}
 
-		if rs = p.recordSection(); rs == nil {
+		if rs = p.recordSection(s); rs == nil {
 			break
 		}
 
@@ -1457,14 +1590,14 @@ func (p *parser) fixedPart() []*recordSection {
 type recordSection struct {
 	list  []*tok
 	colon *tok
-	typ   *typ
+	typ   *typeNode
 }
 
-func (p *parser) recordSection() *recordSection {
+func (p *parser) recordSection(s *scope) *recordSection {
 	return &recordSection{
 		p.identifierList(),
 		p.mustShift(':'),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
@@ -1476,7 +1609,7 @@ func (p *parser) identifierList() []*tok {
 	}
 
 	r := []*tok{t}
-	for p.c().char == ',' {
+	for p.c().ch == ',' {
 		p.shift()
 		if t = p.mustShift(IDENTIFIER); t == nil {
 			break
@@ -1491,36 +1624,38 @@ func (p *parser) identifierList() []*tok {
 type fileType struct {
 	file *tok
 	of   *tok
-	*typ
+	*typeNode
 }
 
-func (p *parser) fileType() *fileType {
+func (p *parser) fileType(s *scope) *fileType {
 	return &fileType{
 		p.mustShift(FILE),
 		p.mustShift(OF),
-		p.typ(),
+		p.typ(s),
 	}
 }
 
 // SimpleType = OrdinalType | RealTypeldentifier.
 type simpleType struct {
 	*ordinalType
-	ident *tok
+	*identifier
 }
 
-func (p *parser) simpleType() *simpleType {
-	switch p.c().char {
+func (p *parser) simpleType(s *scope) *simpleType {
+	switch p.c().ch {
 	case INT_LITERAL, '-':
-		return &simpleType{ordinalType: p.ordinalType()}
+		return &simpleType{ordinalType: p.ordinalType(s)}
 	case IDENTIFIER:
 		id := p.shift()
-		if p.c().char != DD {
-			return &simpleType{ident: id}
+		if p.c().ch != DD {
+			p.unget(id)
+			return &simpleType{identifier: p.identifier(s)}
 		}
 
 		p.unget(id)
-		return &simpleType{ordinalType: p.ordinalType()}
+		return &simpleType{ordinalType: p.ordinalType(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, expected ordinal type or real type identifier", p.c().src)
 	p.shift()
 	return nil
@@ -1532,19 +1667,20 @@ type ordinalType struct {
 	ident *tok
 }
 
-func (p *parser) ordinalType() *ordinalType {
-	switch p.c().char {
+func (p *parser) ordinalType(s *scope) *ordinalType {
+	switch p.c().ch {
 	case INT_LITERAL, '-':
-		return &ordinalType{subrangeType: p.subrangeType()}
+		return &ordinalType{subrangeType: p.subrangeType(s)}
 	case IDENTIFIER:
 		id := p.shift()
-		if p.c().char != DD {
+		if p.c().ch != DD {
 			return &ordinalType{ident: id}
 		}
 
 		p.unget(id)
-		return &ordinalType{subrangeType: p.subrangeType()}
+		return &ordinalType{subrangeType: p.subrangeType(s)}
 	}
+
 	p.err(p.c(), "unexpected %q, enumerated type or subrange type or ordinal type identifier", p.c().src)
 	p.shift()
 	return nil
@@ -1557,11 +1693,11 @@ type subrangeType struct {
 	last  *constant
 }
 
-func (p *parser) subrangeType() *subrangeType {
+func (p *parser) subrangeType(s *scope) *subrangeType {
 	return &subrangeType{
-		p.constant(),
+		p.constant(s),
 		p.mustShift(DD),
-		p.constant(),
+		p.constant(s),
 	}
 }
 
@@ -1592,7 +1728,7 @@ type constantDefinitionPart struct {
 }
 
 func (p *parser) constantDefinitionPart(s *scope) *constantDefinitionPart {
-	if p.c().char != CONST {
+	if p.c().ch != CONST {
 		return nil
 	}
 
@@ -1612,14 +1748,14 @@ type constantDefinition struct {
 func (n *constantDefinition) Position() token.Position { return n.ident.Position() }
 
 func (p *parser) constantDefinition(s *scope) *constantDefinition {
-	if p.c().char != IDENTIFIER {
+	if p.c().ch != IDENTIFIER {
 		return nil
 	}
 
 	r := &constantDefinition{
-		p.shift(),
-		p.mustShift('='),
-		p.constant(),
+		ident:    p.shift(),
+		eq:       p.mustShift('='),
+		constant: p.constant(s),
 	}
 	s.declare(p, r, r.ident.src)
 	return r
@@ -1627,27 +1763,50 @@ func (p *parser) constantDefinition(s *scope) *constantDefinition {
 
 // Constant = [Sign] ( UnsignedNumher | ConstantIdentifier) | CharacterString .
 type constant struct {
+	noder
 	sign  *tok
 	num   *tok
 	ident *tok
 	str   *tok
+	op    operand
 }
 
-func (p *parser) constant() *constant {
+func (n *constant) resolveSymbol(p *parser, s *scope) {
+	// const foo = bar;
+	nm := n.ident.src
+	_, nd := s.find(nm)
+	switch x := nd.(type) {
+	case nil:
+		p.err(n.ident, "undefined: %s", nm)
+	case *constantDefinition:
+		n.op = x.constant.op
+	default:
+		p.err(n.ident, "not a constant: %s (%T)", nm, x)
+	}
+}
+
+func (p *parser) constant(s *scope) (r *constant) {
+	var err error
 	sign := p.sign()
 	if sign = p.sign(); sign != nil {
 		sign = p.shift()
-		switch p.c().char {
+		switch p.c().ch {
 		case INT_LITERAL:
-			return &constant{
+			r := &constant{
 				sign: sign,
 				num:  p.shift(),
 			}
+			if r.op, err = newIntegerOperandFromString(r.num.src); err != nil {
+				p.err(r.num, "%v", err)
+			}
+			return r
 		case IDENTIFIER:
-			return &constant{
+			r = &constant{
 				sign:  sign,
 				ident: p.shift(),
 			}
+			r.resolveSymbol(p, s)
+			return r
 		default:
 			p.err(p.c(), "expected unsigned number or identifier")
 			p.shift()
@@ -1655,27 +1814,47 @@ func (p *parser) constant() *constant {
 		}
 	}
 
-	switch p.c().char {
+	switch p.c().ch {
 	case INT_LITERAL:
-		return &constant{
+		r := &constant{
 			num: p.shift(),
 		}
+		if r.op, err = newIntegerOperandFromString(r.num.src); err != nil {
+			p.err(r.num, "%v", err)
+		}
+		return r
 	case IDENTIFIER:
-		return &constant{
+		r = &constant{
 			ident: p.shift(),
 		}
+		r.resolveSymbol(p, s)
+		return r
 	case STR_LITERAL:
-		return &constant{
-			str: p.shift(),
+		str := p.shift()
+		switch s := goStringFromPascalString(str.src); len(s) {
+		case 0:
+			p.err(str, "empty string constants not supported")
+		case 1:
+			p.err(str, "char constants not supported")
+		default:
+			return &constant{
+				str: str,
+				op:  newStringOperand(goStringFromPascalString(str.src)),
+			}
 		}
 	}
+
 	p.err(p.c(), "expected constant")
 	p.shift()
 	return nil
 }
 
+func goStringFromPascalString(s string) string {
+	return strings.ReplaceAll(s, "''", "'")
+}
+
 func (p *parser) sign() *tok {
-	switch p.c().char {
+	switch p.c().ch {
 	case '+', '-':
 		return p.shift()
 	}
@@ -1713,7 +1892,7 @@ type labelDeclarationPart struct {
 func (n *labelDeclarationPart) Position() token.Position { return n.label.Position() }
 
 func (p *parser) labelDeclarationPart(s *scope) *labelDeclarationPart {
-	if p.c().char != LABEL {
+	if p.c().ch != LABEL {
 		return nil
 	}
 
@@ -1735,7 +1914,7 @@ func (p *parser) labelList() (r []*tok) {
 	}
 
 	r = append(r, tok)
-	for p.c().char == ',' {
+	for p.c().ch == ',' {
 		p.shift()
 		tok := p.mustShift(INT_LITERAL)
 		if tok == nil {

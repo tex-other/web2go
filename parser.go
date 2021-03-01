@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//TODO check assignments
+
 package main // import "modernc.org/web2go"
 
 import (
@@ -10,6 +12,61 @@ import (
 	"strings"
 
 	"modernc.org/strutil"
+)
+
+var (
+	universe = scope{
+		m: map[string]node{
+			"abs": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+				},
+				typ: aInteger,
+			},
+			"boolean": &boolean{},
+			"char":    &char{},
+			"chr": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+				},
+				typ: aChar,
+			},
+			"eof": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+				typ: aBoolean,
+			},
+			"eoln": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+				typ: aBoolean,
+			},
+			"erstat": &functionDeclaration{ //TODO changefile.ch
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+				typ: aInteger,
+			},
+			"false":   &constantDefinition{constant: &constant{op: newBooleanOperand(false)}},
+			"integer": &integer{},
+			"odd": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+				},
+				typ: aBoolean,
+			},
+			"real": &real{},
+			"round": &functionDeclaration{
+				functionHeading: &functionHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aReal}}},
+				},
+				typ: aInteger,
+			},
+			"true": &constantDefinition{constant: &constant{op: newBooleanOperand(true)}},
+		},
+	}
 )
 
 func parse(t *task, b []byte, name string) (*program, error) {
@@ -49,25 +106,11 @@ func newParser(t *task, b []byte, name string) (*parser, error) {
 		return nil, err
 	}
 
+	s.allErrors = t.e
 	return &parser{
-		scanner: s,
-		task:    t,
-		universe: scope{
-			m: map[string]node{
-				"boolean": &boolean{},
-				"char":    &char{},
-				"integer": &integer{},
-				"real":    &real{},
-				"true": &constantDefinition{
-					ident:    &tok{ch: IDENTIFIER, src: "true"},
-					constant: &constant{op: newBooleanOperand(true)},
-				},
-				"false": &constantDefinition{
-					ident:    &tok{ch: IDENTIFIER, src: "false"},
-					constant: &constant{op: newBooleanOperand(false)},
-				},
-			},
-		},
+		scanner:  s,
+		task:     t,
+		universe: universe,
 	}, nil
 }
 
@@ -78,6 +121,7 @@ func (p *parser) err(n node, msg string, args ...interface{}) {
 
 	pos := fmt.Sprintf("%v: ", n.Position())
 	msg = fmt.Sprintf(pos+msg, args...)
+	trc("", msg)
 	p.errs = append(p.errs, msg)
 }
 
@@ -617,14 +661,14 @@ func (p *parser) forStatement(s *scope) *forStatement {
 
 type identifier struct {
 	*tok
-	s *scope
-	n node
+	def   node
+	scope *scope
 }
 
 func (p *parser) identifier(s *scope) *identifier {
 	r := &identifier{tok: p.mustShift(IDENTIFIER)}
 	if r.tok != nil {
-		if r.s, r.n = s.find(r.tok.src); r.n == nil {
+		if r.scope, r.def = s.find(r.tok.src); r.def == nil {
 			p.err(r.tok, "undefined: %s", r.tok.src)
 		}
 	}
@@ -754,22 +798,66 @@ type expression struct {
 	*simpleExpression
 	relOp *tok
 	rhs   *simpleExpression
+	typ
 }
 
 func (p *parser) expression(s *scope) *expression {
+	c0 := p.c()
 	r := &expression{simpleExpression: p.simpleExpression(s)}
+	r.typ = r.simpleExpression.typ
 	switch p.c().ch {
 	case '=', NE, '<', LE, '>', GE, IN:
 		r.relOp = p.shift()
 		r.rhs = p.simpleExpression(s)
+		r.typ = p.relOp(r.relOp, r.typ, r.rhs.typ, r.relOp.ch)
+	}
+	if r.typ == nil {
+		p.err(c0, "expression type not resolved")
 	}
 	return r
 }
 
-// Term = Factor { MultiplyingOperator Factor } .
-type term struct {
-	*factor
-	list []termListItem
+func (p *parser) relOp(n node, lhs, rhs typ, op ch) (r typ) {
+	if lhs == nil || rhs == nil {
+		return lhs
+	}
+
+	x, ok := lhs.(relator)
+	if !ok {
+		p.err(n, "invalid relation operator lhs operand type: %s", lhs)
+		return lhs
+	}
+
+	y, ok := rhs.(relator)
+	if !ok {
+		p.err(n, "invalid relation operator rhs operand type: %s", rhs)
+		return lhs
+	}
+
+	var err error
+	switch op {
+	case '=':
+		r, err = x.eq(y)
+	case NE:
+		r, err = x.ne(y)
+	case '<':
+		r, err = x.lt(y)
+	case LE:
+		r, err = x.le(y)
+	case '>':
+		r, err = x.gt(y)
+	case GE:
+		r, err = x.ge(y)
+	case IN:
+		r, err = x.in(y)
+	default:
+		err = fmt.Errorf("internal error: %s", op)
+	}
+
+	if err != nil {
+		p.err(n, "%s", err)
+	}
+	return r
 }
 
 type termListItem struct {
@@ -777,20 +865,69 @@ type termListItem struct {
 	*factor
 }
 
+// Term = Factor { MultiplyingOperator Factor } .
+type term struct {
+	*factor
+	list []termListItem
+	typ
+}
+
 // a*b*c = (a*b)*c
 func (p *parser) term(s *scope) *term {
 	r := &term{factor: p.factor(s)}
+	r.typ = r.factor.typ
 	for {
 		switch p.c().ch {
 		case '*', '/', DIV, MOD, AND:
-			r.list = append(r.list, termListItem{
+			item := termListItem{
 				p.shift(),
 				p.factor(s),
-			})
+			}
+			r.typ = p.mulOp(item.mulOp, r.typ, item.factor.typ, item.mulOp.ch)
+			r.list = append(r.list, item)
 		default:
 			return r
 		}
 	}
+}
+
+func (p *parser) mulOp(n node, lhs, rhs typ, op ch) (r typ) {
+	if lhs == nil || rhs == nil {
+		return lhs
+	}
+
+	x, ok := lhs.(multiplier)
+	if !ok {
+		p.err(n, "invalid multiplying operator lhs operand type: %s", lhs)
+		return lhs
+	}
+
+	y, ok := rhs.(multiplier)
+	if !ok {
+		p.err(n, "invalid multiplying operator rhs operand type: %s", rhs)
+		return lhs
+	}
+
+	var err error
+	switch op {
+	case '*':
+		r, err = x.mul(y)
+	case '/':
+		r, err = x.div(y)
+	case DIV:
+		r, err = x.idiv(y)
+	case MOD:
+		r, err = x.mod(y)
+	case AND:
+		r, err = x.and(y)
+	default:
+		err = fmt.Errorf("internal error: %s", op)
+	}
+
+	if err != nil {
+		p.err(n, "%s", err)
+	}
+	return r
 }
 
 // Factor = UnsignedConstant | BoundIdentifier | Variable
@@ -798,52 +935,118 @@ func (p *parser) term(s *scope) *term {
 //	"not" factor | "(" Expression ")" .
 type factor struct {
 	*unsignedConstant
-	ident *tok
+	*identifier
 	*functionDesignator
 	*variable
 	*expression
 	not *factor
+	typ
 }
 
 func (p *parser) factor(s *scope) *factor {
+	c0 := p.c()
 	switch p.c().ch {
 	case INT_LITERAL, STR_LITERAL, REAL_LITERAL:
-		return &factor{unsignedConstant: p.unsignedConstant()}
+		r := &factor{unsignedConstant: p.unsignedConstant(s)}
+		r.typ = r.unsignedConstant.op.typ()
+		return r
 	case IDENTIFIER:
 		id := p.shift()
 		if p.c().ch == '(' {
 			p.unget(id)
-			return &factor{functionDesignator: p.functionDesignator(s)}
+			r := &factor{functionDesignator: p.functionDesignator(s)}
+			r.typ = r.functionDesignator.typ
+			return r
 		}
 
-		p.unget(id)
-		return &factor{variable: p.variable(s)}
+		switch _, def := s.find(id.src); x := def.(type) {
+		case *variableDeclaration:
+			p.unget(id)
+			r := &factor{variable: p.variable(s)}
+			r.typ = r.variable.typ
+			return r
+		case *constantDefinition:
+			p.unget(id)
+			r := &factor{unsignedConstant: p.unsignedConstant(s)}
+			r.typ = x.constant.op.typ()
+			return r
+		case *valueParameterSpecification:
+			p.unget(id)
+			r := &factor{variable: p.variable(s)}
+			r.typ = x.typ
+			return r
+		case *variableParameterSpecification:
+			p.unget(id)
+			r := &factor{variable: p.variable(s)}
+			r.typ = x.typ
+			return r
+		case *functionDeclaration:
+			p.unget(id)
+			r := &factor{variable: p.variable(s)}
+			r.typ = x.typ
+			return r
+		default:
+			p.err(c0, "internal error: %T", x)
+			return nil
+		}
 	case '(':
 		p.shift()
 		r := &factor{expression: p.expression(s)}
+		r.typ = r.expression.typ
 		p.mustShift(')')
 		return r
 	case NOT:
-		p.shift()
-		return &factor{not: p.factor(s)}
+		not := p.shift()
+		r := &factor{not: p.factor(s)}
+		r.typ = p.not(not, r.not.typ)
+		return r
 	}
 
-	p.err(p.c(), "unexpected %q, expected unsigned constant or varible or set constructor or 'not' or '( expression ')'", p.c().src)
+	p.err(c0, "unexpected %q, expected unsigned constant or varible or set constructor or 'not' or '( expression ')'", p.c().src)
 	p.shift()
 	return nil
 }
 
+func (p *parser) not(n node, op typ) (r typ) {
+	if op == nil {
+		return op
+	}
+
+	x, ok := op.(noter)
+	if !ok {
+		p.err(n, "invalid not operator operand type: %s", op)
+		return op
+	}
+
+	var err error
+	if r, err = x.not(); err != nil {
+		p.err(n, "%s", err)
+	}
+	return r
+}
+
 // FunctionDesignator = FunctionIdentifier [ ActualParameterList ] .
 type functionDesignator struct {
-	ident *tok
-	list  []*expression
+	*identifier
+	list []*expression
+	typ
 }
 
 func (p *parser) functionDesignator(s *scope) *functionDesignator {
-	return &functionDesignator{
-		p.mustShift(IDENTIFIER),
-		p.actualParameterList(s),
+	c0 := p.c()
+	r := &functionDesignator{
+		identifier: p.identifier(s),
+		list:       p.actualParameterList(s),
 	}
+	switch x := r.identifier.def.(type) {
+	case nil:
+		// handled in p.identifier
+	case *functionDeclaration:
+		r.typ = x.typ
+	default:
+		p.err(c0, "not a function: %s", r.identifier.src)
+	}
+	return r
 }
 
 func (p *parser) actualParameterList(s *scope) (r []*expression) {
@@ -860,19 +1063,44 @@ func (p *parser) actualParameterList(s *scope) (r []*expression) {
 // UnsignedConstant = UnsignedNumber | CharacterString | ConstantIdentifier | "nil" .
 type unsignedConstant struct {
 	*unsignedNumber
-	str   *tok
-	ident *tok
+	str *tok
+	*identifier
+	op operand
 }
 
-func (p *parser) unsignedConstant() *unsignedConstant {
-	switch p.c().ch {
+func (p *parser) unsignedConstant(s *scope) *unsignedConstant {
+	c0 := p.c()
+	switch c0.ch {
 	case INT_LITERAL, REAL_LITERAL:
-		return &unsignedConstant{unsignedNumber: p.unsignedNumber()}
+		r := &unsignedConstant{unsignedNumber: p.unsignedNumber()}
+		r.op = r.unsignedNumber.op
+		return r
 	case STR_LITERAL:
-		return &unsignedConstant{str: p.shift()}
+		r := &unsignedConstant{str: p.shift()}
+		var err error
+		if r.op, err = newOperandFromString(goStringFromPascalString(r.str.src)); err != nil {
+			p.err(c0, "%s", err)
+		}
+		return r
+	case IDENTIFIER:
+		r := &unsignedConstant{identifier: p.identifier(s)}
+		switch x := r.identifier.def.(type) {
+		case *constantDefinition:
+			switch y := x.op.typ().(type) {
+			case *boolean, *integer, *pasString:
+				r.op = x.op
+			default:
+				p.err(c0, "internal error: %T", y)
+				return nil
+			}
+		default:
+			p.err(c0, "internal error: %T", x)
+			return nil
+		}
+		return r
 	}
 
-	p.err(p.c(), "unexpected %q, expected unsigned number or character string or identifier or 'nil'", p.c().src)
+	p.err(c0, "unexpected %q, expected unsigned number or character string or identifier or 'nil'", p.c().src)
 	p.shift()
 	return nil
 }
@@ -881,14 +1109,24 @@ func (p *parser) unsignedConstant() *unsignedConstant {
 type unsignedNumber struct {
 	int  *tok
 	real *tok
+	op   operand
 }
 
 func (p *parser) unsignedNumber() *unsignedNumber {
+	var err error
 	switch p.c().ch {
 	case INT_LITERAL:
-		return &unsignedNumber{int: p.shift()}
+		r := &unsignedNumber{int: p.shift()}
+		if r.op, err = newIntegerOperandFromString(r.int.src); err != nil {
+			p.err(r.int, "%s", err)
+		}
+		return r
 	case REAL_LITERAL:
-		return &unsignedNumber{real: p.shift()}
+		r := &unsignedNumber{real: p.shift()}
+		if r.op, err = newRealOperandFromString(r.real.src); err != nil {
+			p.err(r.int, "%s", err)
+		}
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected unsigned integer or unsigned real", p.c().src)
@@ -896,35 +1134,95 @@ func (p *parser) unsignedNumber() *unsignedNumber {
 	return nil
 }
 
-// SimpleExpression = [ Sign ] Term { AddingOperator Term } .
-type simpleExpression struct {
-	sign *tok
-	*term
-	list []simpleExpressionListItem
-}
-
 type simpleExpressionListItem struct {
 	addOp *tok
 	*term
 }
 
+// SimpleExpression = [ Sign ] Term { AddingOperator Term } .
+type simpleExpression struct {
+	sign *tok
+	*term
+	list []simpleExpressionListItem
+	typ
+}
+
 func (p *parser) simpleExpression(s *scope) *simpleExpression {
+	c0 := p.c()
 	sign := p.sign()
 	r := &simpleExpression{
 		sign: sign,
 		term: p.term(s),
 	}
+	r.typ = r.term.typ
+	if sign != nil && sign.src == "-" {
+		r.typ = p.negType(c0, r.typ)
+	}
 	for {
 		switch p.c().ch {
 		case '+', '-', OR:
-			r.list = append(r.list, simpleExpressionListItem{
+			item := simpleExpressionListItem{
 				p.shift(),
 				p.term(s),
-			})
+			}
+			r.typ = p.addOp(item.addOp, r.typ, item.term.typ, item.addOp.ch)
+			r.list = append(r.list, item)
 		default:
 			return r
 		}
 	}
+}
+
+func (p *parser) negType(n node, op typ) (r typ) {
+	if op == nil {
+		return op
+	}
+
+	x, ok := op.(typeNegator)
+	if !ok {
+		p.err(n, "negation of a wrong type: %v", op)
+		return op
+	}
+
+	var err error
+	if r, err = x.neg(); err != nil {
+		p.err(n, "%s", err)
+	}
+	return r
+}
+
+func (p *parser) addOp(n node, lhs, rhs typ, op ch) (r typ) {
+	if lhs == nil || rhs == nil {
+		return lhs
+	}
+
+	x, ok := lhs.(adder)
+	if !ok {
+		p.err(n, "invalid adding operator lhs operand type: %s", lhs)
+		return lhs
+	}
+
+	y, ok := rhs.(adder)
+	if !ok {
+		p.err(n, "invalid adding operator rhs operand type: %s", rhs)
+		return lhs
+	}
+
+	var err error
+	switch op {
+	case '+':
+		r, err = x.add(y)
+	case '-':
+		r, err = x.sub(y)
+	case OR:
+		r, err = x.or(y)
+	default:
+		err = fmt.Errorf("internal error: %s", op)
+	}
+	if err != nil {
+		p.err(n, "%s", err)
+	}
+	return r
 }
 
 func (p *parser) expressionList(s *scope) (r []*expression) {
@@ -942,19 +1240,46 @@ type variable struct {
 	*identifier
 	*componentVariable
 	deref *variable
+	typ
 }
 
 func (p *parser) variable(s *scope) (r *variable) {
 	switch p.c().ch {
 	case IDENTIFIER:
 		r = &variable{identifier: p.identifier(s)}
+		switch x := r.identifier.def.(type) {
+		case nil:
+			// handled in p.identifier
+		case *variableDeclaration:
+			r.typ = x.typ
+		case *valueParameterSpecification:
+			r.typ = x.typ
+		case *functionDeclaration:
+			r.typ = x.typ
+		case *variableParameterSpecification:
+			r.typ = x.typ
+		default:
+			p.err(r.identifier, "not a variable: %s", r.identifier.src)
+		}
 		for {
 			switch p.c().ch {
-			case '[', '.':
+			case '[':
 				r = &variable{componentVariable: p.componentVariable(s, r)}
+				r.typ = r.componentVariable.typ
+			case '.':
+				r = &variable{componentVariable: p.componentVariable(s, r)}
+				r.typ = r.componentVariable.typ
 			case '^':
+				elem := typ(aInteger)
+				switch x := r.typ.(type) {
+				case *file:
+					elem = x.component
+				default:
+					p.err(p.c(), "expected file type: %s", r.typ)
+				}
 				p.shift()
 				r = &variable{deref: r}
+				r.typ = elem
 			default:
 				return r
 			}
@@ -970,14 +1295,25 @@ func (p *parser) variable(s *scope) (r *variable) {
 type componentVariable struct {
 	*indexedVariable
 	*fieldDesignator
+	typ
 }
 
 func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 	switch p.c().ch {
 	case '[':
-		return &componentVariable{indexedVariable: p.indexedVariable(s, v)}
+		elem := typ(aInteger)
+		if x, ok := v.typ.(*array); ok {
+			elem = x.elem
+		} else {
+			p.err(p.c(), "indexing requires array type: %s", v.typ)
+		}
+		r := &componentVariable{indexedVariable: p.indexedVariable(s, v), typ: elem}
+		r.typ = r.indexedVariable.typ
+		return r
 	case '.':
-		return &componentVariable{fieldDesignator: p.fieldDesignator(v)}
+		r := &componentVariable{fieldDesignator: p.fieldDesignator(v)}
+		r.typ = r.fieldDesignator.typ
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected indexed variable or field designator", p.c().src)
@@ -987,33 +1323,52 @@ func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 
 // FieldDesignator
 type fieldDesignator struct {
-	*variable
 	dot   *tok
 	ident *tok
+	typ
 }
 
 func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
-	return &fieldDesignator{
-		v,
-		p.mustShift('.'),
-		p.mustShift(IDENTIFIER), //TODO
+	r := &fieldDesignator{
+		dot:   p.mustShift('.'),
+		ident: p.mustShift(IDENTIFIER), //TODO
 	}
+	fieldType := typ(aInteger)
+	if x, ok := v.typ.(*record); ok {
+		fld, ok := x.fields[r.ident.src]
+		if !ok {
+			p.err(r.dot, "unknown field: %s", r.ident.src)
+			return nil
+		}
+
+		fieldType = fld.typ
+	} else {
+		p.err(p.c(), "selector requires record type: %s", r.typ)
+	}
+	r.typ = fieldType
+	return r
 }
 
 // IndexedVariahle = ArrayVariable "[" Index { "," Index } "]" .
 type indexedVariable struct {
-	*variable
 	lbrace *tok
 	list   []*expression
 	rbrace *tok
+	typ
 }
 
 func (p *parser) indexedVariable(s *scope, v *variable) *indexedVariable {
+	elem := typ(aInteger)
+	if x, ok := v.typ.(*array); ok {
+		elem = x.elem
+	} else {
+		p.err(p.c(), "indexing requires array type: %s", v.typ)
+	}
 	return &indexedVariable{
-		v,
 		p.mustShift('['),
 		p.expressionList(s),
 		p.mustShift(']'),
+		elem,
 	}
 }
 
@@ -1046,22 +1401,19 @@ type functionDeclaration struct {
 	semi *tok
 	*block
 	forward *tok
+	typ
 }
 
 func (n *functionDeclaration) Position() token.Position { return n.functionHeading.function.Position() }
 
 func (n *functionDeclaration) isCompatible(m *functionDeclaration) bool {
-	panic(todo(""))
+	panic(todo("internal error: not implemented"))
 }
 
 func (p *parser) functionDeclaration(s *scope) *functionDeclaration {
 	r := &functionDeclaration{scope: scope{parent: s}}
-	r.functionHeading = p.functionHeading(s)
-	for _, v := range r.functionHeading.list {
-		for _, w := range v.names() {
-			r.scope.declare(p, w, w.src)
-		}
-	}
+	r.functionHeading = p.functionHeading(&r.scope)
+	r.typ = r.functionHeading.typ
 	s.declare(p, r, r.functionHeading.ident.src)
 	r.semi = p.mustShift(';')
 	if t := p.c(); t.ch == IDENTIFIER && strings.ToLower(t.src) == "forward" {
@@ -1087,10 +1439,10 @@ func (p *parser) functionHeading(s *scope) *functionHeading {
 	r := &functionHeading{
 		function: p.mustShift(FUNCTION),
 		ident:    p.mustShift(IDENTIFIER),
-		list:     p.formalParameterList(s),
-		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s, ""),
 	}
+	r.list = p.formalParameterList(s)
+	r.colon = p.mustShift(':')
+	r.typeNode = p.typeNode(s, "")
 	if r.typ = r.typeNode.typ; r.typ == nil {
 		p.err(r.function, "function type not resolved")
 	}
@@ -1118,14 +1470,9 @@ func (n *procedureDeclaration) isCompatible(m *procedureDeclaration) bool {
 
 func (p *parser) procedureDeclaration(s *scope) *procedureDeclaration {
 	r := &procedureDeclaration{scope: scope{parent: s}}
-	r.procedureHeading = p.procedureHeading(s)
-	for _, v := range r.procedureHeading.list {
-		for _, w := range v.names() {
-			r.scope.declare(p, w, w.src)
-		}
-	}
-	s.declare(p, r, r.procedureHeading.ident.src)
+	r.procedureHeading = p.procedureHeading(&r.scope)
 	r.semi = p.mustShift(';')
+	s.declare(p, r, r.procedureHeading.ident.src)
 	if t := p.c(); t.ch == IDENTIFIER && strings.ToLower(t.src) == "forward" {
 		r.forward = p.shift()
 		return r
@@ -1143,11 +1490,12 @@ type procedureHeading struct {
 }
 
 func (p *parser) procedureHeading(s *scope) *procedureHeading {
-	return &procedureHeading{
-		p.mustShift(PROCEDURE),
-		p.mustShift(IDENTIFIER),
-		p.formalParameterList(s),
+	r := &procedureHeading{
+		procedure: p.mustShift(PROCEDURE),
+		ident:     p.mustShift(IDENTIFIER),
 	}
+	r.list = p.formalParameterList(s)
+	return r
 }
 
 func (n *procedureHeading) isCompatible(m *procedureHeading) bool {
@@ -1188,16 +1536,8 @@ type formalParameterSection struct {
 	typ
 }
 
-func (n *formalParameterSection) names() []*tok {
-	if n.valueParameterSpecification != nil {
-		return n.valueParameterSpecification.list
-	}
-
-	return n.variableParameterSpecification.list
-}
-
 func (n *formalParameterSection) isCompatible(m *formalParameterSection) bool {
-	panic(todo(""))
+	panic(todo("internal error: not implemented"))
 }
 
 func (p *parser) formalParameterSection(s *scope) *formalParameterSection {
@@ -1242,7 +1582,9 @@ func (p *parser) variableParameterSpecification(s *scope) *variableParameterSpec
 		colon:    p.mustShift(':'),
 		typeNode: p.typeNode(s, ""),
 	}
-	//TODO mark as variable type
+	for _, v := range r.list {
+		s.declare(p, r, v.src)
+	}
 	r.typ = r.typeNode.typ
 	return r
 }
@@ -1260,6 +1602,9 @@ func (p *parser) valueParameterSpecification(s *scope) *valueParameterSpecificat
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
 		typeNode: p.typeNode(s, ""),
+	}
+	for _, v := range r.list {
+		s.declare(p, r, v.src)
 	}
 	r.typ = r.typeNode.typ
 	return r
@@ -1516,6 +1861,20 @@ type fieldList struct {
 	*variantPart
 }
 
+func (n *fieldList) collect(m map[string]*field) error {
+	for _, v := range n.fixedPart {
+		for _, w := range v.list {
+			nm := w.src
+			if _, ok := m[nm]; ok {
+				return fmt.Errorf("duplicate field: %s", nm)
+			}
+
+			m[nm] = &field{name: nm, typ: v.typ}
+		}
+	}
+	return nil
+}
+
 func (n *fieldList) goStructLiteral(w strutil.Formatter) error {
 	w.Format("\nstruct {%i")
 	defer w.Format("%u\n}")
@@ -1631,6 +1990,16 @@ func (n *variantPart) goStructLiteral(w strutil.Formatter) error {
 	return nil
 }
 
+func (n *variantPart) collect(m map[string]*field) error {
+	n.variantSelector.collect(m)
+	for _, v := range n.list {
+		if err := v.fieldList.collect(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (n *variantPart) c(w strutil.Formatter) {
 	if n == nil {
 		return
@@ -1709,6 +2078,16 @@ type variantSelector struct {
 	colon    *tok
 	tagType  *tok
 	typ
+}
+
+func (n *variantSelector) collect(m map[string]*field) error {
+	nm := n.tagType.src
+	if _, ok := m[nm]; ok {
+		return fmt.Errorf("duplicated field: %s", nm)
+	}
+
+	m[nm] = &field{name: nm, typ: n.typ}
+	return nil
 }
 
 func (p *parser) variantSelector(s *scope) *variantSelector {
@@ -1869,7 +2248,7 @@ func (p *parser) simpleType(s *scope) *simpleType {
 		if p.c().ch != DD {
 			p.unget(id)
 			r := &simpleType{identifier: p.identifier(s)}
-			switch x := r.identifier.n.(type) {
+			switch x := r.identifier.def.(type) {
 			case nil:
 				// already reported
 			case *typeDefinition:
@@ -2045,8 +2424,24 @@ func (n *constant) resolveSymbol(p *parser, s *scope) {
 }
 
 func (p *parser) constant(s *scope) (r *constant) {
+	c0 := p.c()
+	var neg bool
 	var err error
+
+	defer func() {
+		if r != nil {
+			if r.op == nil || r.op.typ() == nil {
+				p.err(c0, "type or value not resolved")
+			}
+
+			if neg {
+				r.op = p.negOperand(c0, r.op)
+			}
+		}
+	}()
+
 	sign := p.sign()
+	neg = sign != nil && sign.src == "-"
 	if sign = p.sign(); sign != nil {
 		sign = p.shift()
 		switch p.c().ch {
@@ -2096,10 +2491,14 @@ func (p *parser) constant(s *scope) (r *constant) {
 		case 1:
 			p.err(str, "char constants not supported")
 		default:
-			return &constant{
+			r := &constant{
 				str: str,
-				op:  newStringOperand(goStringFromPascalString(str.src)),
 			}
+			var err error
+			if r.op, err = newOperandFromString(goStringFromPascalString(str.src)); err != nil {
+				p.err(c0, "%s", err)
+			}
+			return r
 		}
 	}
 
@@ -2108,7 +2507,22 @@ func (p *parser) constant(s *scope) (r *constant) {
 	return nil
 }
 
+func (p *parser) negOperand(n node, op operand) operand {
+	if op == nil || op.typ() == nil {
+		return op
+	}
+
+	x, ok := op.(operandNegator)
+	if !ok {
+		p.err(n, "negation of a wrong operand type: %v", op.typ())
+		return op
+	}
+
+	return x.neg()
+}
+
 func goStringFromPascalString(s string) string {
+	s = s[1 : len(s)-1]
 	return strings.ReplaceAll(s, "''", "'")
 }
 

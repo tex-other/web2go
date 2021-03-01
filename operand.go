@@ -12,7 +12,9 @@ import (
 
 var (
 	_ operand = booleanOperand(false)
+	_ operand = charOperand(0)
 	_ operand = integerOperand(0)
+	_ operand = realOperand(0)
 	_ operand = stringOperand("")
 )
 
@@ -20,11 +22,21 @@ type operand interface {
 	typ() typ
 }
 
+type operandNegator interface {
+	neg() operand
+}
+
 type booleanOperand bool
 
 func (op booleanOperand) typ() typ { return aBoolean }
 
 func newBooleanOperand(b bool) booleanOperand { return booleanOperand(b) }
+
+type charOperand byte
+
+func newCharOperand(b byte) charOperand { return charOperand(b) }
+
+func (op charOperand) typ() typ { return aChar }
 
 type integerOperand int32
 
@@ -41,10 +53,33 @@ func newIntegerOperandFromString(s string) (integerOperand, error) {
 	return integerOperand(n), nil
 }
 
-func (op integerOperand) typ() typ { return aInteger }
+func (op integerOperand) neg() operand { return -op }
+func (op integerOperand) typ() typ     { return aInteger }
 
 type stringOperand string
 
-func newStringOperand(s string) stringOperand { return stringOperand(s) }
+func newOperandFromString(s string) (operand, error) {
+	switch len(s) {
+	case 0:
+		return stringOperand("invalid"), fmt.Errorf("empty strings not supported")
+	case 1:
+		return newCharOperand(s[0]), nil
+	default:
+		return stringOperand(s), nil
+	}
+}
 
 func (op stringOperand) typ() typ { return newPasStringFromSize(uintptr(len(op))) }
+
+type realOperand float64
+
+func (op realOperand) typ() typ { return aReal }
+
+func newRealOperandFromString(s string) (realOperand, error) {
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return realOperand(n), nil
+}

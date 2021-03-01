@@ -40,6 +40,7 @@ var (
 	aInteger  = &integer{}
 	aReal     = &real{}
 	aRecord   = &record{}
+	aString   = &pasString{}
 	aSubrange = &subrange{}
 
 	stringTypes = map[uintptr]*pasString{}
@@ -49,10 +50,11 @@ var (
 )
 
 type typ interface {
+	String() string
 	cType() string
+	canBeAssignedFrom(rhs typ) bool
 	goType() string
 	node
-	String() string
 	size() uintptr
 }
 
@@ -125,6 +127,15 @@ func (t *char) lt(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) ne(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) size() uintptr               { return unsafe.Sizeof(byte(0)) }
 
+func (t *char) canBeAssignedFrom(rhs typ) bool {
+	switch rhs.(type) {
+	case *char:
+		return true
+	}
+
+	return false
+}
+
 type integer struct {
 	noder
 }
@@ -151,6 +162,15 @@ func (t *integer) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(typ
 func (t *integer) size() uintptr                    { return unsafe.Sizeof(int32(0)) }
 func (t *integer) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
+func (t *integer) canBeAssignedFrom(rhs typ) bool {
+	switch rhs.(type) {
+	case *integer, *subrange:
+		return true
+	}
+
+	return false
+}
+
 func (t *integer) checkInt(rhs typ) (typ, error) {
 	switch rhs.(type) {
 	case *integer, *subrange:
@@ -173,6 +193,15 @@ func (t *integer) binOp(rhs typ) (typ, error) {
 
 type real struct {
 	noder
+}
+
+func (t *real) canBeAssignedFrom(rhs typ) bool {
+	switch rhs.(type) {
+	case *real:
+		return true
+	}
+
+	return false
 }
 
 func (t *real) String() string                   { return "real" }
@@ -209,6 +238,15 @@ type boolean struct {
 	noder
 }
 
+func (t *boolean) canBeAssignedFrom(rhs typ) bool {
+	switch rhs.(type) {
+	case *boolean:
+		return true
+	}
+
+	return false
+}
+
 func (t *boolean) String() string                   { return "boolean" }
 func (t *boolean) add(rhs adder) (typ, error)       { return ndefOp(t) }
 func (t *boolean) and(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
@@ -216,13 +254,13 @@ func (t *boolean) cType() string                    { return "char" }
 func (t *boolean) cardinality() uintptr             { return 2 }
 func (t *boolean) div(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) goType() string                   { return "bool" }
+func (t *boolean) idiv(rhs multiplier) (typ, error) { return ndefOp(t) }
 func (t *boolean) mod(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) mul(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) not() (typ, error)                { return t, nil }
 func (t *boolean) or(rhs adder) (typ, error)        { return t.binOp(rhs.(typ)) }
 func (t *boolean) size() uintptr                    { return unsafe.Sizeof(byte(0)) }
 func (t *boolean) sub(rhs adder) (typ, error)       { return ndefOp(t) }
-func (t *boolean) idiv(rhs multiplier) (typ, error) { return ndefOp(t) }
 
 func (t *boolean) binOp(rhs typ) (typ, error) {
 	switch rhs.(type) {
@@ -248,10 +286,11 @@ func newPasStringFromSize(sz uintptr) *pasString {
 	return t
 }
 
-func (t *pasString) cType() string  { return fmt.Sprintf("char[%d]", t.sz) }
-func (t *pasString) goType() string { return fmt.Sprintf("[%d]byte", t.sz) }
-func (t *pasString) String() string { return "string" }
-func (t *pasString) size() uintptr  { return t.sz }
+func (t *pasString) String() string                 { return "string" }
+func (t *pasString) cType() string                  { return fmt.Sprintf("char[%d]", t.sz) }
+func (t *pasString) canBeAssignedFrom(rhs typ) bool { return false }
+func (t *pasString) goType() string                 { return fmt.Sprintf("[%d]byte", t.sz) }
+func (t *pasString) size() uintptr                  { return t.sz }
 
 type subrange struct {
 	noder
@@ -330,6 +369,15 @@ func (t *subrange) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(ty
 func (t *subrange) size() uintptr                    { return t.sz }
 func (t *subrange) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
+func (t *subrange) canBeAssignedFrom(rhs typ) bool {
+	switch rhs.(type) {
+	case *integer, *subrange:
+		return true
+	}
+
+	return false
+}
+
 func (t *subrange) checkInt(rhs typ) (typ, error) {
 	switch rhs.(type) {
 	case *integer, *subrange:
@@ -359,11 +407,12 @@ type file struct {
 
 func newFile(component typ) *file { return &file{component: component} }
 
-func (t *file) cType() string  { return "void*[2]" }
-func (t *file) goType() string { return "io.ReadWriter" }
-func (t *file) String() string { return "file" }
-func (t *file) setPacked()     { t.packed = true }
-func (t *file) size() uintptr  { return unsafe.Sizeof(interface{}(nil)) }
+func (t *file) String() string                 { return "file" }
+func (t *file) cType() string                  { return "void*[2]" }
+func (t *file) canBeAssignedFrom(rhs typ) bool { return false }
+func (t *file) goType() string                 { return "io.ReadWriter" }
+func (t *file) setPacked()                     { t.packed = true }
+func (t *file) size() uintptr                  { return unsafe.Sizeof(interface{}(nil)) }
 
 type field struct {
 	name string
@@ -429,7 +478,6 @@ func newRecord(goos, goarch string, fieldList *fieldList, tag string) (*record, 
 	}
 
 	r.cachedGoType = strings.TrimSpace(strings.ReplaceAll(b.String(), "\n\n", "\n"))
-	//trc("\ntype %s %s", tag, r.cachedGoType)
 	return r, nil
 }
 
@@ -447,6 +495,15 @@ func (t *record) goType() string {
 	}
 
 	return t.cachedGoType
+}
+
+func (t *record) canBeAssignedFrom(rhs typ) bool {
+	switch x := rhs.(type) {
+	case *record:
+		return t.goType() == x.goType()
+	}
+
+	return false
 }
 
 func (t *record) String() string { return "record" }
@@ -496,3 +553,15 @@ func (t *array) goType() string {
 func (t *array) String() string { return "array" }
 func (t *array) setPacked()     { t.packed = true }
 func (t *array) size() uintptr  { return t.sz }
+
+func (t *array) canBeAssignedFrom(rhs typ) bool {
+	switch x := rhs.(type) {
+	case *pasString:
+		switch t.elem.(type) {
+		case *char:
+			return t.size() >= x.size()
+		}
+	}
+
+	return false
+}

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//TODO check assignments
+//TODO check actuals for .isRead/.isWrite
 
 package main // import "modernc.org/web2go"
 
@@ -24,12 +24,30 @@ var (
 				typ: aInteger,
 			},
 			"boolean": &boolean{},
-			"char":    &char{},
+			"break": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+			},
+			"breakin": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{
+						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
+						{valueParameterSpecification: &valueParameterSpecification{typ: aBoolean}},
+					},
+				},
+			},
+			"char": &char{},
 			"chr": &functionDeclaration{
 				functionHeading: &functionHeading{
 					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
 				},
 				typ: aChar,
+			},
+			"close": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
 			},
 			"eof": &functionDeclaration{
 				functionHeading: &functionHeading{
@@ -49,7 +67,12 @@ var (
 				},
 				typ: aInteger,
 			},
-			"false":   &constantDefinition{constant: &constant{op: newBooleanOperand(false)}},
+			"false": &constantDefinition{constant: &constant{op: newBooleanOperand(false)}},
+			"get": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+			},
 			"integer": &integer{},
 			"odd": &functionDeclaration{
 				functionHeading: &functionHeading{
@@ -57,7 +80,38 @@ var (
 				},
 				typ: aBoolean,
 			},
+			"put": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+				},
+			},
+			"read": &procedureDeclaration{
+				procedureHeading: &procedureHeading{},
+				isRead:           true,
+			},
+			"readln": &procedureDeclaration{
+				procedureHeading: &procedureHeading{},
+				isRead:           true,
+			},
 			"real": &real{},
+			"reset": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{
+						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
+						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+					},
+				},
+			},
+			"rewrite": &procedureDeclaration{
+				procedureHeading: &procedureHeading{
+					list: []*formalParameterSection{
+						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
+						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+					},
+				},
+			},
 			"round": &functionDeclaration{
 				functionHeading: &functionHeading{
 					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aReal}}},
@@ -65,6 +119,14 @@ var (
 				typ: aInteger,
 			},
 			"true": &constantDefinition{constant: &constant{op: newBooleanOperand(true)}},
+			"write": &procedureDeclaration{
+				procedureHeading: &procedureHeading{},
+				isWrite:          true,
+			},
+			"writeln": &procedureDeclaration{
+				procedureHeading: &procedureHeading{},
+				isWrite:          true,
+			},
 		},
 	}
 )
@@ -121,7 +183,6 @@ func (p *parser) err(n node, msg string, args ...interface{}) {
 
 	pos := fmt.Sprintf("%v: ", n.Position())
 	msg = fmt.Sprintf(pos+msg, args...)
-	trc("", msg)
 	p.errs = append(p.errs, msg)
 }
 
@@ -731,27 +792,41 @@ func (p *parser) gotoStatement() *gotoStatement {
 
 // ProcedureStatement = ProcedureIdentifier [ ActualParameterList | WriteParameterList ] .
 type procedureStatement struct {
-	ident *tok
-	list  []*arg
+	*identifier
+	list []*arg
 }
 
 func (p *parser) procedureStatement(s *scope) *procedureStatement {
-	return &procedureStatement{
-		p.mustShift(IDENTIFIER),
-		p.argList(s),
+	c0 := p.c()
+	r := &procedureStatement{identifier: p.identifier(s)}
+	var fp []*formalParameterSection
+	var isRead, isWrite bool
+	switch x := r.identifier.def.(type) {
+	case nil:
+		// handled in p.identifier
+	case *procedureDeclaration:
+		fp = x.procedureHeading.list
+		isRead = x.isRead
+		isWrite = x.isWrite
+	default:
+		p.err(c0, "not a procedure: %s", r.identifier.src)
 	}
+	r.list = p.argList(s, fp, isRead, isWrite)
+	return r
 }
 
-func (p *parser) argList(s *scope) (r []*arg) {
+func (p *parser) argList(s *scope, fp []*formalParameterSection, isRead, isWrite bool) (r []*arg) {
 	if p.c().ch != '(' {
 		return nil
 	}
 
 	p.shift()
-	r = []*arg{p.arg(s)}
+	ix := 0
+	r = []*arg{p.arg(s, fp, ix, isRead, isWrite)}
 	for p.c().ch == ',' {
 		p.shift()
-		r = append(r, p.arg(s))
+		ix++
+		r = append(r, p.arg(s, fp, ix, isRead, isWrite))
 	}
 	p.mustShift(')')
 	return r
@@ -765,8 +840,17 @@ type arg struct {
 	width2 *expression
 }
 
-func (p *parser) arg(s *scope) *arg {
+func (p *parser) arg(s *scope, fp []*formalParameterSection, ix int, isRead, isWrite bool) *arg {
+	c0 := p.c()
 	r := &arg{expression: p.expression(s)}
+	switch {
+	case isRead:
+		//TODO panic(todo(""))
+	case isWrite:
+		//TODO panic(todo(""))
+	default:
+		p.checkArg(c0, r.expression.typ, fp, ix)
+	}
 	if p.c().ch == ':' {
 		r.colon = p.shift()
 		r.width = p.expression(s)
@@ -778,6 +862,23 @@ func (p *parser) arg(s *scope) *arg {
 	return r
 }
 
+func (p *parser) checkArg(n node, rhs typ, fp []*formalParameterSection, ix int) {
+	if ix >= len(fp) {
+		p.err(n, "too many arguments")
+		return
+	}
+
+	lhs := fp[ix].typ
+	if lhs == nil {
+		p.err(n, "formal parameter #%d type not resolved", ix)
+		return
+	}
+
+	if !lhs.canBeAssignedFrom(rhs) {
+		p.err(n, "cannot assign to %s from %s", lhs, rhs)
+	}
+}
+
 // AssignmentStatement = ( Variable | FunctionIdentifier ) ":=" Expression .
 type assignmentStatement struct {
 	*variable
@@ -786,11 +887,15 @@ type assignmentStatement struct {
 }
 
 func (p *parser) assignmentStatement(s *scope) *assignmentStatement {
-	return &assignmentStatement{
+	r := &assignmentStatement{
 		p.variable(s),
 		p.mustShift(ASSIGN),
 		p.expression(s),
 	}
+	if lhs, rhs := r.variable.typ, r.expression.typ; !lhs.canBeAssignedFrom(rhs) {
+		p.err(r.assign, "cannot assign to %s from %s", lhs, rhs)
+	}
+	return r
 }
 
 // Expression = SimpleExression [ RelationalOperator SimpleExression ] .
@@ -973,17 +1078,17 @@ func (p *parser) factor(s *scope) *factor {
 		case *valueParameterSpecification:
 			p.unget(id)
 			r := &factor{variable: p.variable(s)}
-			r.typ = x.typ
+			r.typ = r.variable.typ
 			return r
 		case *variableParameterSpecification:
 			p.unget(id)
 			r := &factor{variable: p.variable(s)}
-			r.typ = x.typ
+			r.typ = r.variable.typ
 			return r
 		case *functionDeclaration:
 			p.unget(id)
 			r := &factor{variable: p.variable(s)}
-			r.typ = x.typ
+			r.typ = r.variable.typ
 			return r
 		default:
 			p.err(c0, "internal error: %T", x)
@@ -1034,10 +1139,18 @@ type functionDesignator struct {
 
 func (p *parser) functionDesignator(s *scope) *functionDesignator {
 	c0 := p.c()
-	r := &functionDesignator{
-		identifier: p.identifier(s),
-		list:       p.actualParameterList(s),
+	r := &functionDesignator{identifier: p.identifier(s)}
+	var fp []*formalParameterSection
+	switch x := r.identifier.def.(type) {
+	case nil:
+		// handled in p.identifier
+	case *functionDeclaration:
+		r.typ = x.typ
+		fp = x.functionHeading.list
+	default:
+		p.err(c0, "not a function: %s", r.identifier.src)
 	}
+	r.list = p.actualParameterList(s, fp)
 	switch x := r.identifier.def.(type) {
 	case nil:
 		// handled in p.identifier
@@ -1049,13 +1162,13 @@ func (p *parser) functionDesignator(s *scope) *functionDesignator {
 	return r
 }
 
-func (p *parser) actualParameterList(s *scope) (r []*expression) {
+func (p *parser) actualParameterList(s *scope, fp []*formalParameterSection) (r []*expression) {
 	if p.c().ch != '(' {
 		return nil
 	}
 
 	p.shift()
-	r = p.expressionList(s)
+	r = p.expressionList(s, fp, true)
 	p.mustShift(')')
 	return r
 }
@@ -1225,11 +1338,21 @@ func (p *parser) addOp(n node, lhs, rhs typ, op ch) (r typ) {
 	return r
 }
 
-func (p *parser) expressionList(s *scope) (r []*expression) {
+func (p *parser) expressionList(s *scope, fp []*formalParameterSection, isCall bool) (r []*expression) {
+	c0 := p.c()
+	var ix int
 	r = []*expression{p.expression(s)}
+	if isCall {
+		p.checkArg(c0, r[0].typ, fp, ix)
+	}
 	for p.c().ch == ',' {
 		p.shift()
-		r = append(r, p.expression(s))
+		expr := p.expression(s)
+		ix++
+		if isCall {
+			p.checkArg(c0, expr.typ, fp, ix)
+		}
+		r = append(r, expr)
 	}
 	return r
 }
@@ -1301,13 +1424,7 @@ type componentVariable struct {
 func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 	switch p.c().ch {
 	case '[':
-		elem := typ(aInteger)
-		if x, ok := v.typ.(*array); ok {
-			elem = x.elem
-		} else {
-			p.err(p.c(), "indexing requires array type: %s", v.typ)
-		}
-		r := &componentVariable{indexedVariable: p.indexedVariable(s, v), typ: elem}
+		r := &componentVariable{indexedVariable: p.indexedVariable(s, v)}
 		r.typ = r.indexedVariable.typ
 		return r
 	case '.':
@@ -1366,7 +1483,7 @@ func (p *parser) indexedVariable(s *scope, v *variable) *indexedVariable {
 	}
 	return &indexedVariable{
 		p.mustShift('['),
-		p.expressionList(s),
+		p.expressionList(s, nil, false),
 		p.mustShift(']'),
 		elem,
 	}
@@ -1458,6 +1575,9 @@ type procedureDeclaration struct {
 	semi *tok
 	*block
 	forward *tok
+
+	isRead  bool
+	isWrite bool
 }
 
 func (n *procedureDeclaration) Position() token.Position {

@@ -113,8 +113,6 @@ func TestScanner(t *testing.T) {
 	if err := s.errList(); err != nil {
 		t.Fatal(err)
 	}
-
-	t.Logf("toks: %v", toks)
 }
 
 func TestParser(t *testing.T) {

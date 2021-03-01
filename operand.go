@@ -47,4 +47,4 @@ type stringOperand string
 
 func newStringOperand(s string) stringOperand { return stringOperand(s) }
 
-func (op stringOperand) typ() typ { return stringTypeForSize(len(op)) }
+func (op stringOperand) typ() typ { return newPasStringFromSize(uintptr(len(op))) }

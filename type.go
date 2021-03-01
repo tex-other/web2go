@@ -23,7 +23,7 @@ var (
 	_ typ = (*integer)(nil)
 	_ typ = (*real)(nil)
 	_ typ = (*record)(nil)
-	_ typ = (*stringType)(nil)
+	_ typ = (*pasString)(nil)
 	_ typ = (*subrange)(nil)
 
 	aBoolean = &boolean{}
@@ -31,15 +31,30 @@ var (
 	aInteger = &integer{}
 	aReal    = &real{}
 
-	stringTypes = map[int]*stringType{}
+	stringTypes = map[uintptr]*pasString{}
+
+	idRecord = cc.String("record")
+	idU      = cc.String("__u__")
 )
 
 type typ interface {
 	node
-	goName() string
+	cType() string
+	goType() string
+	pasKind() string
+	size() uintptr
+}
+
+type ordinal interface {
+	cardinality() uintptr
+}
+
+type packer interface {
 	setPacked()
-	size() int
-	cName() string
+}
+
+type tagger interface {
+	tag() string
 }
 
 type noder struct{}
@@ -50,67 +65,71 @@ type char struct {
 	noder
 }
 
-func (t *char) cName() string  { return "char" }
-func (t *char) goName() string { return "byte" }
-func (t *char) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *char) size() int      { return int(unsafe.Sizeof(byte(0))) }
+func (t *char) cardinality() uintptr { return math.MaxUint8 + 1 }
+func (t *char) cType() string        { return "char" }
+func (t *char) goType() string       { return "byte" }
+func (t *char) pasKind() string      { return "char" }
+func (t *char) size() uintptr        { return unsafe.Sizeof(byte(0)) }
 
 type integer struct {
 	noder
 }
 
-func (t *integer) cName() string  { return "int" }
-func (t *integer) goName() string { return "int32" }
-func (t *integer) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *integer) size() int      { return int(unsafe.Sizeof(int32(0))) }
+func (t *integer) cardinality() uintptr { return math.MaxUint32 + 1 }
+func (t *integer) cType() string        { return "int" }
+func (t *integer) goType() string       { return "int32" }
+func (t *integer) pasKind() string      { return "integer" }
+func (t *integer) size() uintptr        { return unsafe.Sizeof(int32(0)) }
 
 type real struct {
 	noder
 }
 
-func (t *real) cName() string  { return "double" }
-func (t *real) goName() string { return "float64" }
-func (t *real) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *real) size() int      { return int(unsafe.Sizeof(float64(0))) }
+func (t *real) cType() string   { return "double" }
+func (t *real) goType() string  { return "float64" }
+func (t *real) pasKind() string { return "real" }
+func (t *real) size() uintptr   { return unsafe.Sizeof(float64(0)) }
 
 type boolean struct {
 	noder
 }
 
-func (t *boolean) cName() string  { return "char" }
-func (t *boolean) goName() string { return "bool" }
-func (t *boolean) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *boolean) size() int      { return int(unsafe.Sizeof(byte(0))) }
+func (t *boolean) cardinality() uintptr { return 2 }
+func (t *boolean) cType() string        { return "char" }
+func (t *boolean) goType() string       { return "bool" }
+func (t *boolean) pasKind() string      { return "boolean" }
+func (t *boolean) size() uintptr        { return unsafe.Sizeof(byte(0)) }
 
-type stringType struct {
+type pasString struct {
 	noder
-	sz int
+	sz uintptr
 }
 
-func stringTypeForSize(sz int) *stringType {
+func newPasStringFromSize(sz uintptr) *pasString {
 	if x := stringTypes[sz]; x != nil {
 		return x
 	}
 
-	t := &stringType{sz: sz}
+	t := &pasString{sz: sz}
 	stringTypes[sz] = t
 	return t
 }
 
-func (t *stringType) cName() string  { return fmt.Sprintf("char[%d]", t.sz) }
-func (t *stringType) goName() string { return fmt.Sprintf("[%d]byte", t.sz) }
-func (t *stringType) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *stringType) size() int      { return t.sz }
+func (t *pasString) cType() string   { return fmt.Sprintf("char[%d]", t.sz) }
+func (t *pasString) goType() string  { return fmt.Sprintf("[%d]byte", t.sz) }
+func (t *pasString) pasKind() string { return "string" }
+func (t *pasString) size() uintptr   { return t.sz }
 
 type subrange struct {
 	noder
 	lo, hi int
-	sz     int
+	sz     uintptr
 	cNm    string
 	goNm   string
+	card   uintptr
 }
 
-func newSubrange(lo, hi int) *subrange {
+func newSubrange(lo, hi int) (*subrange, error) {
 	r := &subrange{lo: lo, hi: hi}
 	switch {
 	case lo >= 0 && hi >= 0:
@@ -118,28 +137,32 @@ func newSubrange(lo, hi int) *subrange {
 		case hi <= math.MaxUint8:
 			r.cNm = "char"
 			r.goNm = "byte"
-			r.sz = int(unsafe.Sizeof(byte(0)))
+			r.sz = unsafe.Sizeof(byte(0))
+			r.card = math.MaxUint8 + 1
 		case hi <= math.MaxUint16:
 			r.cNm = "short"
 			r.goNm = "uint16"
-			r.sz = int(unsafe.Sizeof(uint16(0)))
+			r.sz = unsafe.Sizeof(uint16(0))
+			r.card = math.MaxUint16 + 1
 		case hi <= math.MaxUint32:
 			r.cNm = "unsigned"
 			r.goNm = "uint32"
-			r.sz = int(unsafe.Sizeof(uint32(0)))
+			r.sz = unsafe.Sizeof(uint32(0))
+			r.card = math.MaxUint32 + 1
 		default:
-			panic(todo("internal error: %v %v", lo, hi))
+			return r, fmt.Errorf("subranges with cardinality exceeding 32 bits not supported")
 		}
 	default:
-		panic(todo("", lo, hi))
+		return r, fmt.Errorf("signed subranges not supported")
 	}
-	return r
+	return r, nil
 }
 
-func (t *subrange) cName() string  { return t.cNm }
-func (t *subrange) goName() string { return t.goNm }
-func (t *subrange) setPacked()     { panic(todo("internal error: setPacked of a wrong type: %T", t)) }
-func (t *subrange) size() int      { return t.sz }
+func (t *subrange) cardinality() uintptr { return t.card }
+func (t *subrange) cType() string        { return t.cNm }
+func (t *subrange) goType() string       { return t.goNm }
+func (t *subrange) pasKind() string      { return "subrange" }
+func (t *subrange) size() uintptr        { return t.sz }
 
 type file struct {
 	noder
@@ -150,10 +173,11 @@ type file struct {
 
 func newFile(component typ) *file { return &file{component: component} }
 
-func (t *file) cName() string  { return "void*[2]" }
-func (t *file) goName() string { return "io.ReadWriter" }
-func (t *file) setPacked()     { t.packed = true }
-func (t *file) size() int      { return int(unsafe.Sizeof(interface{}(nil))) }
+func (t *file) cType() string   { return "void*[2]" }
+func (t *file) goType() string  { return "io.ReadWriter" }
+func (t *file) pasKind() string { return "file" }
+func (t *file) setPacked()      { t.packed = true }
+func (t *file) size() uintptr   { return unsafe.Sizeof(interface{}(nil)) }
 
 type field struct {
 	name string
@@ -163,85 +187,103 @@ type field struct {
 
 type record struct {
 	noder
-	cNm    string
-	ctyp   cc.Type
-	fields []field
-	sz     int
+	cachedCType  string
+	cachedGoType string //TODO
+	ccType       cc.Type
+	sz           uintptr
+	tagS         string
 
 	packed     bool
 	singleItem bool
 }
 
-func newRecord(goos, goarch string, fieldList *fieldList) (*record, error) {
-	r := &record{}
+func newRecord(goos, goarch string, fieldList *fieldList, tag string) (*record, error) {
+	r := &record{tagS: tag}
+	if tag == "" {
+		return r, fmt.Errorf("anonymous record types not supported")
+	}
+
 	var b strings.Builder
 	w := strutil.IndentFormatter(&b, "\t")
-	fieldList.c(w)
-	r.cNm = b.String()
+	fieldList.c(w, true, tag)
+	r.cachedCType = strings.TrimSpace(strings.ReplaceAll(b.String(), "\n\n", "\n"))
 	abi, err := cc.NewABI(goos, goarch)
 	if err != nil {
 		return r, err
 	}
 
 	cfg := &cc.Config{ABI: abi}
-	ast, err := cc.Translate(cfg, nil, nil, []cc.Source{{Name: "record_layout", Value: r.cNm + " record;"}})
+	ast, err := cc.Translate(cfg, nil, nil, []cc.Source{{Name: "record.c", Value: r.cachedCType + ";"}})
 	if err != nil {
 		return r, err
 	}
 
-	var d *cc.Declarator
-	id := cc.String("record")
-	for k := range ast.TLD {
-		if k.Name() == id {
-			d = k
-			break
+	r.ccType = ast.StructTypes[cc.String(tag)]
+	r.sz = r.ccType.Size()
+	if fieldList.variantPart != nil {
+		fld, ok := r.ccType.FieldByName(idU)
+		if !ok {
+			return r, fmt.Errorf("internal error: failed to find variant part type")
 		}
+
+		fieldList.variantPart.align = uintptr(fld.Type().Align())
+		fieldList.variantPart.size = fld.Type().Size()
 	}
-	if d == nil {
-		return r, fmt.Errorf("internal error while computing record layout")
+	b.Reset()
+	if err := fieldList.goStructLiteral(strutil.IndentFormatter(&b, "\t")); err != nil {
+		return r, err
 	}
 
-	r.ctyp = d.Type()
-	r.sz = int(r.ctyp.Size())
+	r.cachedGoType = strings.TrimSpace(strings.ReplaceAll(b.String(), "\n\n", "\n"))
 	return r, nil
 }
 
-func (t *record) cName() string { return t.cNm }
+func (t *record) cType() string {
+	if t.tagS != "" {
+		return fmt.Sprintf("struct %s", t.tagS)
+	}
 
-func (t *record) goName() string {
-	//TODO panic(todo(""))
-	return "TODO-record"
+	return t.cachedCType
 }
 
-func (t *record) setPacked() { t.packed = true }
-func (t *record) size() int  { return t.sz }
+func (t *record) goType() string {
+	if t.tagS != "" {
+		return t.tagS
+	}
+
+	return t.cachedGoType
+}
+
+func (t *record) pasKind() string { return "record" }
+func (t *record) setPacked()      { t.packed = true }
+func (t *record) size() uintptr   { return t.sz }
+func (t *record) tag() string     { return t.tagS }
 
 type array struct {
 	noder
 	dims []typ
 	elem typ
-	sz   int
+	sz   uintptr
 
 	packed bool
 }
 
-func newArray(n node, dims []*typeNode, elem typ) *array {
+func newArray(n node, dims []*typeNode, elem typ) (*array, error) {
 	r := &array{elem: elem, sz: elem.size()}
 	for _, v := range dims {
 		r.dims = append(r.dims, v.typ)
-		switch x := v.typ.(type) {
-		case *char:
-			r.sz *= 256
-		case *subrange:
-			r.sz *= (x.hi - x.lo + 1)
-		default:
-			panic(todo("%v: %T", n.Position(), x))
+		ordinal, ok := v.typ.(ordinal)
+		if !ok {
+			return r, fmt.Errorf("ordinal type required: %s", v.typ.pasKind())
 		}
+
+		r.sz *= ordinal.cardinality()
 	}
-	return r
+	return r, nil
 }
 
-func (t *array) cName() string  { panic(todo("")) }
-func (t *array) goName() string { panic(todo("")) }
-func (t *array) setPacked()     { t.packed = true }
-func (t *array) size() int      { return t.sz }
+func (t *array) cType() string   { panic(todo("")) }
+func (t *array) goType() string  { panic(todo("")) }
+func (t *array) pasKind() string { return "array" }
+func (t *array) setPacked()      { t.packed = true }
+func (t *array) size() uintptr   { return t.sz }

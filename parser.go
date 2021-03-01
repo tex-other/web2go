@@ -1089,7 +1089,7 @@ func (p *parser) functionHeading(s *scope) *functionHeading {
 		ident:    p.mustShift(IDENTIFIER),
 		list:     p.formalParameterList(s),
 		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	if r.typ = r.typeNode.typ; r.typ == nil {
 		p.err(r.function, "function type not resolved")
@@ -1240,7 +1240,7 @@ func (p *parser) variableParameterSpecification(s *scope) *variableParameterSpec
 		var_:     p.mustShift(VAR),
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	//TODO mark as variable type
 	r.typ = r.typeNode.typ
@@ -1259,7 +1259,7 @@ func (p *parser) valueParameterSpecification(s *scope) *valueParameterSpecificat
 	r := &valueParameterSpecification{
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	r.typ = r.typeNode.typ
 	return r
@@ -1306,7 +1306,7 @@ func (p *parser) variableDeclaration(s *scope) *variableDeclaration {
 	r := &variableDeclaration{
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	if r.typ = r.typeNode.typ; r.typ == nil {
 		p.err(r.list[0], "variable type not resolved: %s", r.list[0].src)
@@ -1349,10 +1349,11 @@ func (p *parser) typeDefinition(s *scope) *typeDefinition {
 		return nil
 	}
 
+	tag := p.c().src
 	r := &typeDefinition{
 		ident:    p.mustShift(IDENTIFIER),
 		eq:       p.mustShift('='),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, tag),
 	}
 	s.declare(p, r, r.ident.src)
 	if r.typ = r.typeNode.typ; r.typ == nil {
@@ -1368,14 +1369,14 @@ type typeNode struct {
 	typ
 }
 
-func (p *parser) typeNode(s *scope) *typeNode {
+func (p *parser) typeNode(s *scope, tag string) *typeNode {
 	switch p.c().ch {
 	case INT_LITERAL, IDENTIFIER, '-':
 		r := &typeNode{simpleType: p.simpleType(s)}
 		r.typ = r.simpleType.typ
 		return r
 	case PACKED, RECORD, FILE, ARRAY:
-		r := &typeNode{structuredType: p.structuredType(s)}
+		r := &typeNode{structuredType: p.structuredType(s, tag)}
 		r.typ = r.structuredType.typ
 		return r
 	}
@@ -1392,21 +1393,21 @@ type structuredType struct {
 	typ
 }
 
-func (p *parser) structuredType(s *scope) *structuredType {
+func (p *parser) structuredType(s *scope, tag string) *structuredType {
 	if p.c().ch == PACKED {
 		r := &structuredType{
 			packed:                 p.shift(),
-			unpackedStructuredType: p.unpackedStructuredType(s),
+			unpackedStructuredType: p.unpackedStructuredType(s, tag),
 		}
 		r.typ = r.unpackedStructuredType.typ
 		if r.typ != nil {
-			r.typ.setPacked()
+			r.typ.(packer).setPacked()
 		}
 		return r
 	}
 
 	r := &structuredType{
-		unpackedStructuredType: p.unpackedStructuredType(s),
+		unpackedStructuredType: p.unpackedStructuredType(s, tag),
 	}
 	r.typ = r.unpackedStructuredType.typ
 	return r
@@ -1420,14 +1421,14 @@ type unpackedStructuredType struct {
 	typ
 }
 
-func (p *parser) unpackedStructuredType(s *scope) *unpackedStructuredType {
+func (p *parser) unpackedStructuredType(s *scope, tag string) *unpackedStructuredType {
 	switch p.c().ch {
 	case FILE:
 		r := &unpackedStructuredType{fileType: p.fileType(s)}
 		r.typ = r.fileType.typ
 		return r
 	case RECORD:
-		r := &unpackedStructuredType{recordType: p.recordType(s)}
+		r := &unpackedStructuredType{recordType: p.recordType(s, tag)}
 		r.typ = r.recordType.typ
 		return r
 	case ARRAY:
@@ -1459,7 +1460,7 @@ func (p *parser) arrayType(s *scope) *arrayType {
 		list:     p.typeList(s),
 		rbrace:   p.mustShift(']'),
 		of:       p.mustShift(OF),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	for _, v := range r.list {
 		if v.typ == nil {
@@ -1473,14 +1474,17 @@ func (p *parser) arrayType(s *scope) *arrayType {
 		return r
 	}
 
-	r.typ = newArray(r.array, r.list, r.typeNode.typ)
+	var err error
+	if r.typ, err = newArray(r.array, r.list, r.typeNode.typ); err != nil {
+		p.err(r.array, "%s", err)
+	}
 	return r
 }
 
 func (p *parser) typeList(s *scope) (r []*typeNode) {
-	r = append(r, p.typeNode(s))
+	r = append(r, p.typeNode(s, ""))
 	for p.c().ch == ',' {
-		r = append(r, p.typeNode(s))
+		r = append(r, p.typeNode(s, ""))
 	}
 	return r
 }
@@ -1493,14 +1497,14 @@ type recordType struct {
 	typ
 }
 
-func (p *parser) recordType(s *scope) *recordType {
+func (p *parser) recordType(s *scope, tag string) *recordType {
 	r := &recordType{
 		record:    p.mustShift(RECORD),
 		fieldList: p.fieldList(s),
 		end:       p.mustShift(END),
 	}
 	var err error
-	if r.typ, err = newRecord(p.task.goos, p.task.goarch, r.fieldList); err != nil {
+	if r.typ, err = newRecord(p.task.goos, p.task.goarch, r.fieldList, tag); err != nil {
 		p.err(r.record, "compute layout: %v", err)
 	}
 	return r
@@ -1512,8 +1516,31 @@ type fieldList struct {
 	*variantPart
 }
 
-func (n *fieldList) c(w strutil.Formatter) {
-	w.Format("struct {%i")
+func (n *fieldList) goStructLiteral(w strutil.Formatter) error {
+	w.Format("\nstruct {%i")
+	defer w.Format("%u\n}")
+	for _, v := range n.fixedPart {
+		w.Format("\n")
+		if err := v.goStructLiteral(w); err != nil {
+			return err
+		}
+	}
+	return n.variantPart.goStructLiteral(w)
+}
+
+func (n *fieldList) c(w strutil.Formatter, mustWrapInStruct bool, tag string) bool {
+	if len(n.fixedPart) > 1 || n.variantPart != nil {
+		mustWrapInStruct = true
+	}
+	if mustWrapInStruct {
+		switch {
+		case tag == "":
+			w.Format("\nstruct {%i")
+		default:
+			w.Format("\nstruct %s {%i", tag)
+		}
+		defer w.Format("%u\n}")
+	}
 	for _, v := range n.fixedPart {
 		w.Format("\n")
 		v.c(w)
@@ -1524,7 +1551,7 @@ func (n *fieldList) c(w strutil.Formatter) {
 		n.variantPart.c(w)
 		w.Format(";")
 	}
-	w.Format("%u\n}")
+	return mustWrapInStruct
 }
 
 func (p *parser) fieldList(s *scope) *fieldList {
@@ -1572,8 +1599,36 @@ func (p *parser) fieldList(s *scope) *fieldList {
 type variantPart struct {
 	case_ *tok
 	*variantSelector
-	of   *tok
-	list []*variant
+	of    *tok
+	list  []*variant
+	align uintptr
+	size  uintptr
+}
+
+func (n *variantPart) goStructLiteral(w strutil.Formatter) error {
+	if n == nil {
+		return nil
+	}
+
+	w.Format("\n%s\t%s", n.variantSelector.tagType.src, n.variantSelector.typ.goType())
+	if n.align != n.size {
+		return fmt.Errorf("variant parts requiring padding not supported: align %v, size %v", n.align, n.size)
+	}
+
+	w.Format("\nvariant\t")
+	switch n.align {
+	case 1:
+		w.Format("byte")
+	case 2:
+		w.Format("uint16")
+	case 4:
+		w.Format("uint32")
+	case 8:
+		w.Format("float64")
+	default:
+		return fmt.Errorf("unsupported variant part alignment: %v", n.align)
+	}
+	return nil
 }
 
 func (n *variantPart) c(w strutil.Formatter) {
@@ -1581,23 +1636,23 @@ func (n *variantPart) c(w strutil.Formatter) {
 		return
 	}
 
-	w.Format("%s\t%s;", n.variantSelector.typ.cName(), strings.ToUpper(n.variantSelector.tagType.src))
+	w.Format("%s\t%s;", n.variantSelector.typ.cType(), strings.ToUpper(n.variantSelector.tagType.src))
 	w.Format("\nunion {%i")
 	for _, v := range n.list {
-		w.Format("\n")
-		v.fieldList.c(w)
-		w.Format(";")
+		if v.fieldList.c(w, false, "") {
+			w.Format(";")
+		}
 	}
-	w.Format("%u\n}")
+	w.Format("%u\n} %s", idU)
 
 }
 
 func (p *parser) variantPart(s *scope) *variantPart {
 	return &variantPart{
-		p.mustShift(CASE),
-		p.variantSelector(s),
-		p.mustShift(OF),
-		p.variantList(s),
+		case_:           p.mustShift(CASE),
+		variantSelector: p.variantSelector(s),
+		of:              p.mustShift(OF),
+		list:            p.variantList(s),
 	}
 }
 
@@ -1669,11 +1724,8 @@ func (p *parser) variantSelector(s *scope) *variantSelector {
 			p.err(r.tagType, "undefined: %s", r.tagType.src)
 		case *typeDefinition:
 			r.typ = x.typ
-			switch x := r.typ.(type) { //TODO-
-			case *subrange:
-				// ok
-			default:
-				panic(todo("%v: %T", r.tagType, x))
+			if _, ok := r.typ.(ordinal); !ok {
+				p.err(tok, "ordinal type required: %s", tok.src)
 			}
 		default:
 			p.err(r.tagType, "not a type: %s", r.tagType.src)
@@ -1717,8 +1769,26 @@ type recordSection struct {
 	typ
 }
 
+func (n *recordSection) goStructLiteral(w strutil.Formatter) error {
+	for i, v := range n.list {
+		w.Format("%s", v.src)
+		if i != len(n.list)-1 {
+			w.Format(", ")
+		}
+	}
+	w.Format("\t")
+	a := strings.Split(n.typ.goType(), "\n")
+	for i, v := range a {
+		w.Format("%s", v)
+		if i != len(a)-1 {
+			w.Format("\n")
+		}
+	}
+	return nil
+}
+
 func (n *recordSection) c(w strutil.Formatter) {
-	a := strings.Split(n.typ.cName(), "\n")
+	a := strings.Split(n.typ.cType(), "\n")
 	for i, v := range a {
 		w.Format("%s", v)
 		if i != len(a)-1 {
@@ -1738,7 +1808,7 @@ func (p *parser) recordSection(s *scope) *recordSection {
 	r := &recordSection{
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	r.typ = r.typeNode.typ
 	return r
@@ -1775,7 +1845,7 @@ func (p *parser) fileType(s *scope) *fileType {
 	r := &fileType{
 		file:     p.mustShift(FILE),
 		of:       p.mustShift(OF),
-		typeNode: p.typeNode(s),
+		typeNode: p.typeNode(s, ""),
 	}
 	r.typ = newFile(r.typeNode.typ)
 	return r
@@ -1880,7 +1950,10 @@ func (p *parser) subrangeType(s *scope) *subrangeType {
 	default:
 		p.err(r.first, "expected integer constant")
 	}
-	r.typ = newSubrange(first, last)
+	var err error
+	if r.typ, err = newSubrange(first, last); err != nil {
+		p.err(r.dd, "%s", err)
+	}
 	return r
 }
 

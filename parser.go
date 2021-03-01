@@ -19,70 +19,70 @@ var (
 		m: map[string]node{
 			"abs": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 				typ: aInteger,
 			},
 			"boolean": &boolean{},
 			"break": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 			},
 			"breakin": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
 					list: []*formalParameterSection{
-						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
-						{valueParameterSpecification: &valueParameterSpecification{typ: aBoolean}},
+						{typ: aFile},
+						{typ: aBoolean},
 					},
 				},
 			},
 			"char": &char{},
 			"chr": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+					list: []*formalParameterSection{{typ: aInteger}},
 				},
 				typ: aChar,
 			},
 			"close": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 			},
 			"eof": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 				typ: aBoolean,
 			},
 			"eoln": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 				typ: aBoolean,
 			},
 			"erstat": &functionDeclaration{ //TODO changefile.ch
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 				typ: aInteger,
 			},
 			"false": &constantDefinition{constant: &constant{op: newBooleanOperand(false)}},
 			"get": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 			},
 			"integer": &integer{},
 			"odd": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aInteger}}},
+					list: []*formalParameterSection{{typ: aInteger}},
 				},
 				typ: aBoolean,
 			},
 			"put": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aFile}}},
+					list: []*formalParameterSection{{typ: aFile}},
 				},
 			},
 			"read": &procedureDeclaration{
@@ -97,24 +97,24 @@ var (
 			"reset": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
 					list: []*formalParameterSection{
-						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
-						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
-						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+						{typ: aFile},
+						{typ: aString},
+						{typ: aString},
 					},
 				},
 			},
 			"rewrite": &procedureDeclaration{
 				procedureHeading: &procedureHeading{
 					list: []*formalParameterSection{
-						{valueParameterSpecification: &valueParameterSpecification{typ: aFile}},
-						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
-						{valueParameterSpecification: &valueParameterSpecification{typ: aString}},
+						{typ: aFile},
+						{typ: aString},
+						{typ: aString},
 					},
 				},
 			},
 			"round": &functionDeclaration{
 				functionHeading: &functionHeading{
-					list: []*formalParameterSection{{valueParameterSpecification: &valueParameterSpecification{typ: aReal}}},
+					list: []*formalParameterSection{{typ: aReal}},
 				},
 				typ: aInteger,
 			},

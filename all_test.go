@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -77,15 +78,16 @@ func testMain(m *testing.M) int {
 }
 
 func TestScanner(t *testing.T) {
+	const changeFile = "changefile.ch"
 	task := newTask(os.Args)
+	task.tempDir = tempDir
 	task.in = "tex.web"
-	var err error
-	task.changeFile, err = filepath.Abs("changefile.ch")
-	if err != nil {
+	pth := filepath.Join(tempDir, changeFile)
+	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
 		t.Fatal(err)
 	}
 
-	task.tempDir = tempDir
+	task.changeFile = pth
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
 		t.Fatalf("%s\n%v", b, err)
@@ -116,17 +118,16 @@ func TestScanner(t *testing.T) {
 }
 
 func TestParser(t *testing.T) {
+	const changeFile = "changefile.ch"
 	task := newTask(os.Args)
+	task.tempDir = tempDir
 	task.in = "tex.web"
-	task.goos = runtime.GOOS
-	task.goarch = runtime.GOARCH
-	var err error
-	task.changeFile, err = filepath.Abs("changefile.ch")
-	if err != nil {
+	pth := filepath.Join(tempDir, changeFile)
+	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
 		t.Fatal(err)
 	}
 
-	task.tempDir = tempDir
+	task.changeFile = pth
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
 		t.Fatalf("%s\n%v", b, err)
@@ -144,5 +145,60 @@ func TestParser(t *testing.T) {
 
 	if program == nil {
 		t.Fatal("empty result but no error")
+	}
+}
+
+func TestGenerator(t *testing.T) {
+	const changeFile = "changefile.ch"
+	task := newTask(os.Args)
+	task.tempDir = tempDir
+	task.in = "tex.web"
+	task.o = filepath.Join(tempDir, "tex.go")
+	pth := filepath.Join(tempDir, changeFile)
+	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
+		t.Fatal(err)
+	}
+
+	task.changeFile = pth
+	task.p = filepath.Join(task.tempDir, "tex.p")
+	if b, err := task.web2p(); err != nil {
+		t.Fatalf("%s\n%v", b, err)
+	}
+
+	b, err := ioutil.ReadFile(task.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	program, err := parse(task, b, "tex.p")
+	if err != nil {
+		t.Fatalf("could not parse: %+v", err)
+	}
+
+	if program == nil {
+		t.Fatal("empty result but no error")
+	}
+
+	func() {
+		project := newProject(task)
+		defer func() {
+			if e := recover(); e != nil {
+				project.err(nil, "%s\n%v", stack(), e)
+				err = fmt.Errorf("%s", strings.Join(project.errs, "\n"))
+			}
+		}()
+
+		err = project.main(program)
+	}()
+	if testing.Verbose() {
+		b, _ = ioutil.ReadFile(task.o)
+		fmt.Printf("%s\n", b)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if b, err = exec.Command("go", "build", "-o", os.DevNull, task.o).CombinedOutput(); err != nil {
+		t.Fatalf("%s\n%v", b, err)
 	}
 }

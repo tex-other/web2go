@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//TODO trip test suite
+
+//go:generate assets -d . -re changefile.ch|rtl.go
 //go:generate stringer -output stringer.go -linecomment -type=ch
+//go:generate gofmt -l -s -w .
 
 // Command web2go is an attempt to mechanically translate tex.web to Go. (Work
 // in progress.)
@@ -34,27 +38,8 @@
 //	SYNOPSIS
 //	       tangle [options] webfile[.web] [changefile[.ch]]
 //
-// Used to convert .web to .p.
-//
-//	ptop(1)
-//
-//	NAME
-//	       ptop - The FPC Pascal configurable source beautifier.
-//
-//	       Origin probably Pascal-TO-Pascal.
-//
-//	SYNOPSIS
-//	       ptop[-v][-iindent][-bbufsize][-coptsfile]<infile><outfile>
-//
-// Used to optionally convert .p to .pas.
-//
-// Environment variables
-//
-// TARGET_GOARCH selects the GOARCH of the resulting Go code. Defaults to
-// $GOARCH or runtime.GOARCH if $GOARCH is not set.
-//
-// TARGET_GOOS selects the GOOS of the resulting Go code. Defaults to $GOOS or
-// runtime.GOOS if $GOOS is not set.
+// Used to convert a .web, like tex.web to a .p (Pascal) file. Tangle binary is
+// part of the Debian package 'texlive'.
 //
 // Invocation
 //
@@ -62,18 +47,10 @@
 //
 //	$ web2go [options] input-file
 //
-// Input files
+// The input file
 //
-// A .web file will be processed by tangle to produce a .p file that will be
-// the input of the transpiler. If the -ptop option is given, the .p file will
-// by formatted by ptop to produce a .pas file which will be the transpiler
-// input.
-//
-// A .p file will be the input file of the transpiler. If the -ptop option is
-// given, the .p file will by formatted by ptop to produce a .pas file which
-// will be the transpiler input.
-//
-// A .pas file is the input of the transpiler.
+// A .web file that will be processed by tangle to produce a .p file that will
+// be the input of the transpiler.
 //
 // Options
 //
@@ -89,17 +66,6 @@
 // When processing a .web file, keep the resulting .p file in file-name.
 // Existing files will be overwritten without asking.
 //
-//	-pas file-name
-//
-// When formatting a .p file, keep the resulting .pas file in file-name.
-// Existing files will be overwritten without asking.
-//
-//	-ptop
-//
-// If the input-file is .web or .p, format the .p file using ptop to produce a
-// .pas file that will be the input of the transpiler.  Requires ptop to be
-// installed.
-//
 //	-e
 //
 // Show all errors, if any.
@@ -113,6 +79,8 @@
 package main // import "modernc.org/web2go"
 
 import (
+	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -124,22 +92,18 @@ import (
 	"strings"
 )
 
-func env(name, deflt string) (r string) {
-	r = deflt
-	if s := os.Getenv(name); s != "" {
-		r = s
+func fatalf(stack bool, s string, args ...interface{}) {
+	if stack {
+		fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
 	}
-	return r
-}
-
-func fatalf(s string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(fmt.Sprintf(s, args...)))
 	os.Exit(1)
 }
 
-func fatal(args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
+func fatal(stack bool, args ...interface{}) {
+	if stack {
+		fmt.Fprintf(os.Stderr, "%s\n", debug.Stack())
+	}
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(fmt.Sprint(args...)))
 	os.Exit(1)
 }
@@ -197,22 +161,30 @@ func trc(s string, args ...interface{}) string { //TODO-
 func main() {
 	task := newTask(os.Args)
 	flag.BoolVar(&task.e, "e", false, "show all errors")
-	flag.BoolVar(&task.ptop, "ptop", false, "format .p to .pas")
+	flag.BoolVar(&task.stack, "stack", false, "show dying stack traces")
 	flag.StringVar(&task.o, "o", "", ".go output file")
 	flag.StringVar(&task.p, "p", "", ".p output file")
-	flag.StringVar(&task.pas, "pas", "", ".pas output file")
 	flag.Parse()
 	if flag.NArg() == 0 {
-		fatal("missing input file argument")
+		fatal(task.stack, "missing input file argument")
 	}
 
-	if flag.NArg() > 1 {
-		fatal("only one input file expected")
+	switch flag.NArg() {
+	case 0:
+		fatal(task.stack, "missing input file argument")
+	case 2:
+		task.changeFile = flag.Arg(1)
+		fallthrough
+	case 1:
+		task.in = flag.Arg(0)
+	default:
+		fatal(task.stack, "at most two input files expected")
 	}
 
-	task.in = flag.Arg(0)
-	task.goarch = env("TARGET_GOARCH", env("GOARCH", runtime.GOARCH))
-	task.goos = env("TARGET_GOOS", env("GOOS", runtime.GOOS))
+	if task.o == "" {
+		fatal(task.stack, "missing output file argument")
+	}
+
 	if err := task.main(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -220,24 +192,28 @@ func main() {
 }
 
 type task struct {
-	args       []string
-	changeFile string
-	cleanup    []func()
-	goarch     string
-	goos       string
-	in         string
-	o          string
-	p          string
-	pas        string
-	tempDir    string
+	args         []string
+	changeFile   string
+	cleanup      []func()
+	copyright    []string
+	in           string // tex.web, for example
+	o            string // -o
+	p            string // -p
+	pkgName      string
+	progTypeName string
+	rcvrName     string
+	tempDir      string
 
-	e    bool
-	ptop bool
+	e     bool // -e
+	stack bool // -stack
 }
 
 func newTask(args []string) *task {
 	return &task{
-		args: args,
+		args:         args,
+		pkgName:      "tex",
+		progTypeName: "tex",
+		rcvrName:     "tex",
 	}
 }
 
@@ -258,7 +234,21 @@ func (t *task) main() error {
 		t.cleanup = append(t.cleanup, func() { os.RemoveAll(t.tempDir) })
 	}
 
-	panic(todo(""))
+	if b, err := t.web2p(); err != nil {
+		return fmt.Errorf("%s\n%v", b, err)
+	}
+
+	b, err := ioutil.ReadFile(t.p)
+	if err != nil {
+		return err
+	}
+
+	program, err := parse(t, b, t.p)
+	if err != nil {
+		return err
+	}
+
+	return newProject(t).main(program)
 }
 
 func (t *task) web2p() ([]byte, error) {
@@ -273,6 +263,7 @@ func (t *task) web2p() ([]byte, error) {
 		return nil, err
 	}
 
+	t.copyright = t.extractCopyright(b)
 	f := filepath.Join(t.tempDir, t.in)
 	if err := ioutil.WriteFile(f, b, 0660); err != nil {
 		return nil, err
@@ -301,4 +292,37 @@ func (t *task) web2p() ([]byte, error) {
 	}
 
 	return b, nil
+}
+
+func (t *task) extractCopyright(b []byte) (r []string) {
+	const maxLines = 100
+	s := bufio.NewScanner(bytes.NewReader(b))
+	line := 1
+	for s.Scan() {
+		const tag = "% "
+		t := s.Text()
+		perc := strings.HasPrefix(t, tag)
+		if t != "" && !perc {
+			break
+		}
+
+		if perc {
+			t = t[len(tag):]
+		}
+		r = append(r, t)
+		line++
+		if line > maxLines {
+			break
+		}
+	}
+	for len(r) != 0 && r[0] == "" {
+		r = r[1:]
+	}
+	for len(r) != 0 && r[len(r)-1] == "" {
+		r = r[:len(r)-1]
+	}
+	if err := s.Err(); err != nil {
+		r = append(r, fmt.Sprintf("ERROR: %s", err))
+	}
+	return r
 }

@@ -33,9 +33,9 @@ edit:
 	@touch log
 	@if [ -f "Session.vim" ]; then gvim -S & else gvim -p Makefile parser.yy *.go & fi
 
-editor: stringer.go
+editor: stringer.go assets.go
 	gofmt -l -s -w *.go 2>&1 | tee log
-	GO111MODULE=off go test -v ./... 2>&1 | tee -a log
+	GO111MODULE=off go test ./... 2>&1 | tee -a log
 	GO111MODULE=off go install -v ./... 2>&1 | tee -a log
 	@gofmt -l -s -w .
 
@@ -55,3 +55,8 @@ todo:
 
 stringer.go: scanner.go
 	stringer -output stringer.go -linecomment -type=ch
+	gofmt -l -s -w .
+
+assets.go: changefile.ch rtl.go
+	assets -d . -re 'changefile.ch|rtl.go'
+	gofmt -l -s -w .

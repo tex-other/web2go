@@ -23,7 +23,6 @@ var (
 	_ typ = (*integer)(nil)
 	_ typ = (*real)(nil)
 	_ typ = (*record)(nil)
-	_ typ = (*pasString)(nil)
 	_ typ = (*subrange)(nil)
 
 	_ = []adder{aBoolean, aInteger, aReal, aSubrange}
@@ -31,7 +30,7 @@ var (
 	_ = []noter{aBoolean}
 	_ = []packer{aArray, aFile, aRecord}
 	_ = []relator{aChar, aInteger, aReal, aSubrange}
-	_ = []typeNegator{aInteger, aReal, aSubrange}
+	_ = []negator{aInteger, aReal, aSubrange}
 
 	aArray    = &array{}
 	aBoolean  = &boolean{}
@@ -40,10 +39,14 @@ var (
 	aInteger  = &integer{}
 	aReal     = &real{}
 	aRecord   = &record{}
-	aString   = &pasString{}
 	aSubrange = &subrange{}
-
-	stringTypes = map[uintptr]*pasString{}
+	aString   = &array{ // pseudo type
+		dims:     []typ{aInteger},
+		elem:     aChar,
+		sz:       0, // indicates open array, invalid otherwise
+		isPacked: true,
+		isString: true,
+	}
 
 	idRecord = cc.String("record")
 	idU      = cc.String("__u__")
@@ -55,6 +58,7 @@ type typ interface {
 	canBeAssignedFrom(rhs typ) bool
 	goType() string
 	node
+	render() string
 	size() uintptr
 }
 
@@ -70,7 +74,7 @@ type tagger interface {
 	tag() string
 }
 
-type typeNegator interface {
+type negator interface {
 	neg() (typ, error)
 }
 
@@ -125,6 +129,7 @@ func (t *char) in(rhs relator) (typ, error) { return ndefOp(t) }
 func (t *char) le(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) lt(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) ne(rhs relator) (typ, error) { return aBoolean, nil }
+func (t *char) render() string              { return t.goType() }
 func (t *char) size() uintptr               { return unsafe.Sizeof(byte(0)) }
 
 func (t *char) canBeAssignedFrom(rhs typ) bool {
@@ -159,6 +164,7 @@ func (t *integer) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) 
 func (t *integer) ne(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *integer) neg() (typ, error)                { return t, nil }
 func (t *integer) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(typ)) }
+func (t *integer) render() string                   { return t.goType() }
 func (t *integer) size() uintptr                    { return unsafe.Sizeof(int32(0)) }
 func (t *integer) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
@@ -197,7 +203,7 @@ type real struct {
 
 func (t *real) canBeAssignedFrom(rhs typ) bool {
 	switch rhs.(type) {
-	case *real:
+	case *real, *integer, *subrange:
 		return true
 	}
 
@@ -222,6 +228,7 @@ func (t *real) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *real) ne(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) neg() (typ, error)                { return t, nil }
 func (t *real) or(rhs adder) (typ, error)        { return ndefOp(t) }
+func (t *real) render() string                   { return t.goType() }
 func (t *real) size() uintptr                    { return unsafe.Sizeof(float64(0)) }
 func (t *real) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
@@ -259,6 +266,7 @@ func (t *boolean) mod(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) mul(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) not() (typ, error)                { return t, nil }
 func (t *boolean) or(rhs adder) (typ, error)        { return t.binOp(rhs.(typ)) }
+func (t *boolean) render() string                   { return t.goType() }
 func (t *boolean) size() uintptr                    { return unsafe.Sizeof(byte(0)) }
 func (t *boolean) sub(rhs adder) (typ, error)       { return ndefOp(t) }
 
@@ -270,27 +278,6 @@ func (t *boolean) binOp(rhs typ) (typ, error) {
 		return ndefOp(rhs)
 	}
 }
-
-type pasString struct {
-	noder
-	sz uintptr
-}
-
-func newPasStringFromSize(sz uintptr) *pasString {
-	if x := stringTypes[sz]; x != nil {
-		return x
-	}
-
-	t := &pasString{sz: sz}
-	stringTypes[sz] = t
-	return t
-}
-
-func (t *pasString) String() string                 { return "string" }
-func (t *pasString) cType() string                  { return fmt.Sprintf("char[%d]", t.sz) }
-func (t *pasString) canBeAssignedFrom(rhs typ) bool { return false }
-func (t *pasString) goType() string                 { return fmt.Sprintf("[%d]byte", t.sz) }
-func (t *pasString) size() uintptr                  { return t.sz }
 
 type subrange struct {
 	noder
@@ -347,7 +334,7 @@ func newSubrange(lo, hi int) (*subrange, error) {
 	return r, nil
 }
 
-func (t *subrange) String() string                   { return "subrange" }
+func (t *subrange) String() string                   { return fmt.Sprintf("%d..%d", t.lo, t.hi) }
 func (t *subrange) add(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 func (t *subrange) and(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *subrange) cType() string                    { return t.cNm }
@@ -366,6 +353,7 @@ func (t *subrange) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ))
 func (t *subrange) ne(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *subrange) neg() (typ, error)                { return t, nil }
 func (t *subrange) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(typ)) }
+func (t *subrange) render() string                   { return t.goType() }
 func (t *subrange) size() uintptr                    { return t.sz }
 func (t *subrange) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
@@ -407,16 +395,28 @@ type file struct {
 
 func newFile(component typ) *file { return &file{component: component} }
 
-func (t *file) String() string                 { return "file" }
-func (t *file) cType() string                  { return "void*[2]" }
-func (t *file) canBeAssignedFrom(rhs typ) bool { return false }
-func (t *file) goType() string                 { return "io.ReadWriter" }
-func (t *file) setPacked()                     { t.packed = true }
-func (t *file) size() uintptr                  { return unsafe.Sizeof(interface{}(nil)) }
+func (t *file) String() string { return fmt.Sprintf("file of %v", t.component) }
+func (t *file) cType() string  { return "void*[2]" }
+func (t *file) goType() string { return "*pasFile" }
+func (t *file) render() string { return t.goType() }
+func (t *file) setPacked()     { t.packed = true }
+func (t *file) size() uintptr  { return unsafe.Sizeof(interface{}(nil)) }
+
+func (t *file) canBeAssignedFrom(rhs typ) bool {
+	switch x := rhs.(type) {
+	case *file:
+		return t.component == nil || t.component.canBeAssignedFrom(x.component)
+	}
+
+	return false
+}
 
 type field struct {
 	name string
+	off  uintptr // wrt the variant field
 	typ
+
+	isVariant bool
 }
 
 type record struct {
@@ -427,6 +427,7 @@ type record struct {
 	fields       map[string]*field
 	sz           uintptr
 	tagS         string
+	variants     []*field
 
 	packed     bool
 	singleItem bool
@@ -458,22 +459,34 @@ func newRecord(goos, goarch string, fieldList *fieldList, tag string) (*record, 
 
 	r.ccType = ast.StructTypes[cc.String(tag)]
 	r.sz = r.ccType.Size()
-	if err := fieldList.collect(r.fields); err != nil {
+	if _, err := fieldList.collect(r.fields); err != nil {
 		return r, err
 	}
 
 	if fieldList.variantPart != nil {
-		fld, ok := r.ccType.FieldByName(idU)
+		unionField, ok := r.ccType.FieldByName(idU)
 		if !ok {
 			return r, fmt.Errorf("internal error: failed to find variant part type")
 		}
 
-		fieldList.variantPart.align = uintptr(fld.Type().Align())
-		fieldList.variantPart.size = fld.Type().Size()
-		fieldList.variantPart.collect(r.fields)
+		fieldList.variantPart.align = uintptr(unionField.Type().Align())
+		fieldList.variantPart.size = unionField.Type().Size()
+		if r.variants, err = fieldList.variantPart.collect(r.fields); err != nil {
+			return r, err
+		}
+
+		u := unionField.Type()
+		for _, v := range r.variants {
+			f, ok := u.FieldByName(cc.String(strings.ToUpper(v.name)))
+			if !ok {
+				return r, fmt.Errorf("internal error: failed to find variant field: %s", v.name)
+			}
+
+			v.off = f.Offset()
+		}
 	}
 	b.Reset()
-	if err := fieldList.goStructLiteral(strutil.IndentFormatter(&b, "\t")); err != nil {
+	if err := fieldList.structLiteral(strutil.IndentFormatter(&b, "\t")); err != nil {
 		return r, err
 	}
 
@@ -506,7 +519,8 @@ func (t *record) canBeAssignedFrom(rhs typ) bool {
 	return false
 }
 
-func (t *record) String() string { return "record" }
+func (t *record) String() string { return fmt.Sprintf("record %s", t.tagS) }
+func (t *record) render() string { return t.cachedGoType }
 func (t *record) setPacked()     { t.packed = true }
 func (t *record) size() uintptr  { return t.sz }
 func (t *record) tag() string    { return t.tagS }
@@ -517,7 +531,8 @@ type array struct {
 	elem typ
 	sz   uintptr
 
-	packed bool
+	isPacked bool
+	isString bool
 }
 
 func newArray(n node, dims []*typeNode, elem typ) (*array, error) {
@@ -531,6 +546,10 @@ func newArray(n node, dims []*typeNode, elem typ) (*array, error) {
 
 		r.sz *= ordinal.cardinality()
 	}
+	if r.sz == 0 {
+		return r, fmt.Errorf("internal error: array has zero size")
+	}
+
 	return r, nil
 }
 
@@ -550,16 +569,33 @@ func (t *array) goType() string {
 	return fmt.Sprintf("%s%s", strings.Join(a, ""), t.elem.goType())
 }
 
-func (t *array) String() string { return "array" }
-func (t *array) setPacked()     { t.packed = true }
+func (t *array) String() string {
+	if t.isString {
+		return fmt.Sprintf("array[%d] or char", t.sz)
+	}
+
+	return fmt.Sprintf("array%v of %v", t.dims, t.elem)
+}
+
+func (t *array) render() string { return t.goType() }
+func (t *array) setPacked()     { t.isPacked = true }
 func (t *array) size() uintptr  { return t.sz }
 
 func (t *array) canBeAssignedFrom(rhs typ) bool {
 	switch x := rhs.(type) {
-	case *pasString:
-		switch t.elem.(type) {
-		case *char:
-			return t.size() >= x.size()
+	case *array:
+		if (t.size() == x.size() || t.isString && t.size() == 0) &&
+			len(t.dims) == len(x.dims) &&
+			t.elem.size() == x.elem.size() &&
+			t.isPacked == x.isPacked {
+
+			for i, v := range t.dims {
+				if !v.canBeAssignedFrom(x.dims[i]) {
+					return false
+				}
+			}
+
+			return true
 		}
 	}
 

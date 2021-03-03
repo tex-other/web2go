@@ -84,7 +84,12 @@ func (l stringLiteral) typ() typ {
 	}
 
 	t := &array{
-		dims:     []typ{aInteger},
+		dims: []typ{&subrange{
+			lo:   1,
+			hi:   len(l),
+			sz:   uintptr(len(l)),
+			card: uint64(len(l)),
+		}},
 		elem:     aChar,
 		sz:       uintptr(len(l)),
 		isPacked: true,

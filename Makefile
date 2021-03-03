@@ -25,13 +25,23 @@ all:
 	@LC_ALL=C date 2>&1 | tee -a log
 	@grep -n --color=always 'FAIL\|PASS' log 
 
+build_all_targets:
+	GOOS=darwin GOARCH=amd64 go build -v -o /dev/null ./...
+	GOOS=linux GOARCH=386 go build -v -o /dev/null ./...
+	GOOS=linux GOARCH=amd64 go build -v -o /dev/null ./...
+	GOOS=linux GOARCH=arm go build -v -o /dev/null ./...
+	GOOS=linux GOARCH=arm64 go build -v -o /dev/null ./...
+	GOOS=windows GOARCH=386 go build -v -o /dev/null ./...
+	GOOS=windows GOARCH=amd64 go build -v -o /dev/null ./...
+	echo done
+
 clean:
 	go clean
 	rm -f *~ *.test *.out
 
 edit:
 	@touch log
-	@if [ -f "Session.vim" ]; then gvim -S & else gvim -p Makefile parser.yy *.go & fi
+	@if [ -f "Session.vim" ]; then gvim -S & else gvim -p Makefile *.go & fi
 
 editor: stringer.go assets.go
 	gofmt -l -s -w *.go 2>&1 | tee log

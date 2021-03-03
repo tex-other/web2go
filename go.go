@@ -14,9 +14,10 @@ import (
 )
 
 type project struct {
-	task *task
-	out  io.Writer
-	errs []string
+	task      *task
+	out       io.Writer
+	errs      []string
+	nextLabel int
 
 	closed bool
 }
@@ -25,6 +26,12 @@ func newProject(t *task) *project {
 	return &project{
 		task: t,
 	}
+}
+
+func (p *project) newLabel() int {
+	r := p.nextLabel
+	p.nextLabel++
+	return r
 }
 
 func (p *project) err(n node, msg string, args ...interface{}) {
@@ -97,6 +104,7 @@ package %s
 import "unsafe"
 
 `, p.task.pkgName)
+	//TODO p.block(program.block, true, p.flat(program.block))
 	p.block(program.block, true)
 	rtl := assets["/rtl.go"]
 	const tag = "/* CUT HERE */"
@@ -106,6 +114,21 @@ import "unsafe"
 	return
 }
 
+// func (p *project) flat(n *block) bool {
+// 	ldp := n.labelDeclarationPart
+// 	if ldp == nil {
+// 		return false
+// 	}
+//
+// 	if len(ldp.list) > 1 {
+// 		return true
+// 	}
+//
+// 	// block has exactly one label
+// 	list := n.compoundStatement.list
+// 	return list[len(list)-1].label == nil
+// }
+
 func (p *project) block(n *block, tld bool) {
 	p.constantDefinitionPart(n.constantDefinitionPart)
 	p.typeDefinitionPart(n.typeDefinitionPart)
@@ -113,6 +136,696 @@ func (p *project) block(n *block, tld bool) {
 	for _, v := range n.list {
 		p.procedureAndFunctionDeclarationPart(v)
 	}
+	p.nextLabel = 0
+	p.compoundStatement(n.compoundStatement, tld, false, true)
+}
+
+func (p *project) compoundStatement(n *compoundStatement, tld, braces, braced bool) {
+	if tld {
+		p.w("\n\nfunc (%s *%s) main() {", p.task.rcvrName, p.task.progTypeName)
+		defer p.w("\n}")
+	}
+	if braces {
+		p.w("\n{")
+		defer p.w("\n}")
+	}
+	for _, v := range n.list {
+		p.statement(v, braced)
+	}
+}
+
+func (p *project) statement(n *statement, braced bool) {
+	var s string
+	if !braced {
+		s = "\n"
+	}
+	//TODO if flat && n.label != nil {
+	if n.label != nil {
+		p.w("%s", s)
+		s = ""
+		p.w("%s:", p.label(n.label))
+	}
+	if n.simpleStatement != nil {
+		if n.simpleStatement.isEmpty {
+			return
+		}
+
+		p.w("%s", s)
+		p.simpleStatement(n.simpleStatement)
+		p.w(";")
+		return
+	}
+
+	p.w("%s", s)
+	p.structuredStatmenent(n.structuredStatmenent, braced)
+	p.w(";")
+}
+
+func (p *project) label(n *tok) string {
+	return "label" + n.src
+}
+
+func (p *project) structuredStatmenent(n *structuredStatmenent, braced bool) {
+	if n.repetitiveStatement != nil {
+		p.repetitiveStatement(n.repetitiveStatement)
+		return
+	}
+
+	if n.compoundStatement != nil {
+		p.compoundStatement(n.compoundStatement, false, !braced, braced)
+		return
+	}
+
+	p.conditionalStatement(n.conditionalStatement)
+}
+
+func (p *project) conditionalStatement(n *conditionalStatement) {
+	if n.caseStatement != nil {
+		p.caseStatement(n.caseStatement)
+		return
+	}
+
+	p.ifStatement(n.ifStatement)
+}
+
+func (p *project) ifStatement(n *ifStatement) {
+	// if flat {
+	// 	// if !expr goto Z
+	// 	//      if-statetement
+	// 	// Z:
+	// 	if n.else_ == nil {
+	// 		z := p.newLabel()
+	// 		p.w("if !(")
+	// 		p.expression(n.expression, false)
+	// 		p.w(") { goto flat%d };", z)
+	// 		p.statement(n.statement, true, true)
+	// 		p.w("; flat%d:", z)
+	// 		return
+	// 	}
+
+	// 	// if !expr goto A
+	// 	//      if-statetement
+	// 	//      goto Z
+	// 	// A:
+	// 	//      else-statement
+	// 	// Z:
+	// 	a := p.newLabel()
+	// 	z := p.newLabel()
+	// 	p.w("if !(")
+	// 	p.expression(n.expression, false)
+	// 	p.w(") { goto flat%d };", a)
+	// 	p.statement(n.statement, true, true)
+	// 	p.w("; goto flat%d; flat%d:", z, a)
+	// 	p.statement(n.elseStatement, false, true)
+	// 	p.w("; flat%d:", z)
+	// 	return
+	// }
+
+	p.w("if ")
+	p.expression(n.expression, aBoolean, false)
+	p.w(" {")
+	p.statement(n.statement, true)
+	p.w("\n}")
+	if n.else_ == nil {
+		return
+	}
+
+	switch {
+	case n.elseStatement.isIf:
+		p.w(" else ")
+		p.statement(n.elseStatement, false)
+	default:
+		p.w(" else {")
+		p.statement(n.elseStatement, true)
+		p.w("\n}")
+	}
+}
+
+func (p *project) caseStatement(n *caseStatement) {
+	// if flat {
+	// 	p.w("/*TODO.caseStatement.flat*/")
+	// 	return
+	// }
+
+	p.w("switch ")
+	p.expression(n.expression, n.expression.typ, false)
+	p.w(" {")
+	for _, v := range n.list {
+		p.case_(v)
+	}
+	p.w("\n}")
+}
+
+func (p *project) case_(n *case_) {
+	switch {
+	case n.elseTok != nil:
+		p.w("\ndefault")
+	default:
+		p.w("\ncase")
+		for i, v := range n.list {
+			if i != 0 {
+				p.w(",")
+			}
+			p.w(" %s", v.literal.render())
+		}
+	}
+	p.w(":")
+	p.statement(n.statement, true)
+}
+
+func (p *project) repetitiveStatement(n *repetitiveStatement) {
+	if n.forStatement != nil {
+		p.forStatement(n.forStatement)
+		return
+	}
+
+	if n.whileStatement != nil {
+		p.whileStatement(n.whileStatement)
+		return
+	}
+
+	p.repeatStatement(n.repeatStatement)
+}
+
+func (p *project) repeatStatement(n *repeatStatement) {
+	// if flat {
+	// 	p.w("/*TODO repeatStatement.flat*/")
+	// 	return
+	// }
+
+	p.w("for {")
+	for _, v := range n.list {
+		p.statement(v, false)
+	}
+	p.w("\nif ")
+	p.expression(n.expression, aBoolean, false)
+	p.w(" {\nbreak\n}\n}")
+}
+
+func (p *project) whileStatement(n *whileStatement) {
+	// if flat {
+	// 	// A: if !expr goto Z
+	// 	//	statement
+	// 	//	goto A
+	// 	// Z:
+	// 	a := p.newLabel()
+	// 	z := p.newLabel()
+	// 	p.w("flat%d: if !(", a)
+	// 	p.expression(n.expression, false)
+	// 	p.w(") { goto flat%d };", z)
+	// 	p.statement(n.statement, true, false)
+	// 	p.w(";goto flat%d; flat%d:", a, z)
+	// 	return
+	// }
+
+	p.w("for ")
+	p.expression(n.expression, aBoolean, false)
+	p.w(" {")
+	p.statement(n.statement, true)
+	p.w("\n}")
+}
+
+func (p *project) forStatement(n *forStatement) {
+	// if flat {
+	// 	p.w("/*TODO forStatement.flat*/")
+	// 	return
+	// }
+
+	loopVarType := n.identifier.typ
+	p.w("for ")
+	p.identifier(n.identifier)
+	p.w(" = ")
+	p.expression(n.initial, loopVarType, false)
+	p.w("; ")
+	p.identifier(n.identifier)
+	var s string
+	switch n.toOrDownto.ch {
+	case TO:
+		p.w(" <= ")
+		p.expression(n.final, loopVarType, false)
+		s = "++"
+	default:
+		p.w(" >= ")
+		p.expression(n.final, loopVarType, false)
+		s = "--"
+	}
+	p.w("; ")
+	p.identifier(n.identifier)
+	p.w("%s {", s)
+	p.statement(n.statement, true)
+	p.w("\n}")
+}
+
+func (p *project) simpleStatement(n *simpleStatement) {
+	if n.assignmentStatement != nil {
+		p.assignmentStatement(n.assignmentStatement)
+		return
+	}
+
+	if n.procedureStatement != nil {
+		p.procedureStatement(n.procedureStatement)
+		return
+	}
+
+	if n.gotoStatement != nil {
+		p.gotoStatement(n.gotoStatement)
+	}
+}
+
+func (p *project) gotoStatement(n *gotoStatement) {
+	// if flat {
+	// 	p.w("goto %s", p.label(n.label))
+	// 	return
+	// }
+
+	// p.w("return")
+
+	p.w("goto %s", p.label(n.label))
+}
+
+func (p *project) procedureStatement(n *procedureStatement) {
+	switch def := n.identifier.def.(*procedureDeclaration); {
+	case
+		def.isRead,
+		def.isWrite:
+
+		p.identifier(n.identifier)
+		p.w("(")
+		defer p.w(")")
+		for _, v := range n.list {
+			p.arg(v)
+			p.w(", ")
+		}
+	default:
+		p.identifier(n.identifier)
+		p.w("(")
+		defer p.w(")")
+		args := def.procedureHeading.args
+		for i, v := range n.list {
+			p.expression(v.expression, args[i], false)
+			p.w(", ")
+		}
+	}
+}
+
+func (p *project) arg(n *arg) {
+	p.expression(n.expression, n.expression.typ, false)
+	if n.width == nil {
+		return
+	}
+
+	p.w(", vaWidth(")
+	p.expression(n.width, n.width.typ, false)
+	p.w(")")
+
+	if n.width2 == nil {
+		return
+	}
+
+	p.w(", vaWidth(")
+	p.expression(n.width2, n.width2.typ, false)
+	p.w(")")
+}
+
+func (p *project) assignmentStatement(n *assignmentStatement) {
+	switch lt := n.variable.typ.(type) {
+	case *array:
+		switch rt := n.expression.typ.(type) {
+		case *array:
+			if lt.canBeAssignedFrom(rt) {
+				if rt.isString {
+					p.w("copy(")
+					p.variable(n.variable, true, 0)
+					p.w("[:], ")
+					p.expression(n.expression, n.variable.typ, false)
+					p.w(")")
+					return
+				}
+
+				panic(todo(""))
+			}
+
+			panic(todo(""))
+		}
+	}
+
+	switch p.variable(n.variable, true, 0) {
+	case true:
+		p.w("(")
+		p.expression(n.expression, n.variable.typ, false)
+		p.w(")")
+	default:
+		p.w(" = ")
+		p.expression(n.expression, n.variable.typ, false)
+	}
+}
+
+func (p *project) expression(n *expression, t typ, parens bool) {
+	defer p.w("%s", p.convert(n.typ, t))
+	if parens {
+		p.w("(")
+		defer p.w(")")
+	}
+	if n.relOp == nil {
+		p.simpleExpression(n.simpleExpression, n.simpleExpression.typ, parens)
+		return
+	}
+
+	t = p.promote(n.simpleExpression.typ, n.rhs.typ)
+	p.simpleExpression(n.simpleExpression, t, parens)
+	switch n.relOp.ch {
+	case '=':
+		p.w(" == ")
+	case NE:
+		p.w(" != ")
+	case '<':
+		p.w(" < ")
+	case LE:
+		p.w(" <= ")
+	case '>':
+		p.w(" > ")
+	case GE:
+		p.w(" >= ")
+	case IN:
+		p.err(n.relOp, "internal error: %s", n.relOp.ch)
+	default:
+		p.err(n.relOp, "internal error: %s", n.relOp.ch)
+	}
+	p.simpleExpression(n.rhs, t, parens)
+}
+
+func (p *project) promote(a, b typ) typ {
+	switch x := a.(type) {
+	case *integer:
+		switch y := b.(type) {
+		case *integer:
+			return a
+		case *subrange:
+			return a
+		case *real:
+			return b
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *subrange:
+		switch y := b.(type) {
+		case *integer:
+			return b
+		case *subrange:
+			if a.size() > b.size() {
+				return a
+			}
+
+			return b
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *char:
+		switch y := b.(type) {
+		case *char:
+			return a
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *real:
+		switch y := b.(type) {
+		case *real:
+			return a
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	default:
+		panic(todo("%T", x))
+	}
+}
+
+func (p *project) convert(from, to typ) string {
+	if from == to {
+		return ""
+	}
+
+	switch f := from.(type) {
+	case *char:
+		switch t := to.(type) {
+		case *char:
+			return ""
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	case *integer:
+		switch t := to.(type) {
+		case *integer:
+			return ""
+		case *subrange:
+			p.w("%s(", t.goType())
+			return ")"
+		case *real:
+			p.w("%s(", t.goType())
+			return ")"
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	case *real:
+		switch t := to.(type) {
+		case *real:
+			return ""
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	case *boolean:
+		switch t := to.(type) {
+		case *boolean:
+			return ""
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	case *array:
+		if to.canBeAssignedFrom(from) {
+			return ""
+		}
+
+		panic(todo("%v -> %v: %T", from, to, f))
+	case *subrange:
+		switch t := to.(type) {
+		case *subrange:
+			if f.lo == t.lo && f.hi == t.hi || f.size() == t.size() {
+				return ""
+			}
+
+			p.w("%s(", t.goType())
+			return ")"
+		case *integer:
+			p.w("%s(", t.goType())
+			return ")"
+		case *real:
+			p.w("%s(", t.goType())
+			return ")"
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	case *file:
+		switch t := to.(type) {
+		case *file:
+			if t.component == nil || t.component.canBeAssignedFrom(f.component) {
+				return ""
+			}
+
+			panic(todo("%v -> %v: %T", from, to, t))
+		default:
+			panic(todo("%v -> %v: %T", from, to, t))
+		}
+	default:
+		panic(todo("%v -> %v: %T", from, to, f))
+	}
+}
+
+func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {
+	defer p.w("%s", p.convert(n.typ, t))
+	if n.sign != nil {
+		p.w("-")
+	}
+	if parens {
+		p.w("(")
+		defer p.w(")")
+	}
+	if len(n.list) == 0 {
+		p.term(n.term, n.term.typ)
+		return
+	}
+
+	p.term(n.term, t)
+	for _, v := range n.list {
+		switch v.addOp.ch {
+		case '+':
+			p.w(" + ")
+		case '-':
+			p.w(" - ")
+		case OR:
+			p.w(" || ")
+		default:
+			p.err(v.addOp, "internal error: %s", v.addOp.ch)
+		}
+		p.term(v.term, t)
+	}
+}
+
+func (p *project) term(n *term, t typ) {
+	defer p.w("%s", p.convert(n.typ, t))
+	if len(n.list) != 0 {
+		p.w("(")
+		defer p.w(")")
+	}
+	if len(n.list) == 0 {
+		p.factor(n.factor, n.factor.typ)
+		return
+	}
+
+	p.factor(n.factor, t)
+	for _, v := range n.list {
+		switch v.mulOp.ch {
+		case '*':
+			p.w(" * ")
+		case '/':
+			p.w(" / ") //TODO adjust per operand types
+		case DIV:
+			p.w(" / ") //TODO adjust per operand types
+		case MOD:
+			p.w(" %% ")
+		case AND:
+			p.w(" && ")
+		default:
+			p.err(v.mulOp, "internal error: %s", v.mulOp.ch)
+		}
+		p.factor(v.factor, t)
+	}
+}
+
+func (p *project) factor(n *factor, t typ) {
+	defer p.w("%s", p.convert(n.typ, t))
+	if n.unsignedConstant != nil {
+		p.unsignedConstant(n.unsignedConstant)
+		return
+	}
+
+	if n.identifier != nil {
+		p.identifier(n.identifier)
+		return
+	}
+
+	if n.functionDesignator != nil {
+		p.functionDesignator(n.functionDesignator)
+		return
+	}
+
+	if n.variable != nil {
+		p.variable(n.variable, false, 0)
+		return
+	}
+
+	if n.expression != nil {
+		p.expression(n.expression, n.expression.typ, true)
+		return
+	}
+
+	p.w("!")
+	p.factor(n.not, aBoolean)
+}
+
+func (p *project) functionDesignator(n *functionDesignator) {
+	p.identifier(n.identifier)
+	p.w("(")
+	args := n.identifier.def.(*functionDeclaration).functionHeading.args
+	for i, v := range n.list {
+		p.expression(v, args[i], false)
+		p.w(", ")
+	}
+	p.w(")")
+}
+
+func (p *project) unsignedConstant(n *unsignedConstant) {
+	if n.unsignedNumber != nil {
+		p.unsignedNumber(n.unsignedNumber)
+		return
+	}
+
+	if n.str != nil {
+		p.w("%s", n.literal.render())
+		return
+	}
+
+	p.identifier(n.identifier)
+}
+
+func (p *project) unsignedNumber(n *unsignedNumber) {
+	p.w("%s", n.literal.render())
+}
+
+func (p *project) variable(n *variable, lvalue bool, lvl int) bool {
+	if n.identifier != nil {
+		p.identifier(n.identifier)
+		return false
+	}
+
+	if n.componentVariable != nil {
+		return p.componentVariable(n.componentVariable, lvalue, lvl)
+	}
+
+	p.deref(n.deref)
+	return false
+}
+
+func (p *project) deref(n *variable) {
+	p.variable(n, false, 0)
+	p.w(".%s()", n.typ.(*file).component.goType())
+}
+
+func (p *project) componentVariable(n *componentVariable, lvalue bool, lvl int) bool {
+	if n.indexedVariable != nil {
+		p.indexedVariable(n.indexedVariable)
+		return false
+	}
+
+	return p.fieldDesignator(n.fieldDesignator, lvalue, lvl)
+}
+
+func (p *project) fieldDesignator(n *fieldDesignator, lvalue bool, lvl int) bool {
+	p.variable(n.variable, lvalue, lvl+1)
+	switch {
+	case lvalue && n.field.isVariant && lvl == 0:
+		p.w(".%s", p.setterName(n.ident.src))
+		return true
+	case lvalue && n.field.isVariant && lvl != 0:
+		p.w(".%s()", p.lvalueName(n.ident.src))
+		return false
+	case n.field.isVariant:
+		p.w(".%s()", n.ident.src)
+		return false
+	default:
+		p.w(".%s", n.ident.src)
+		return false
+	}
+	//TODO use getter/setter where/when appropriate
+}
+
+func (p *project) indexedVariable(n *indexedVariable) {
+	p.variable(n.variable, false, 0)
+	dims := n.variable.typ.(*array).dims
+	for i, v := range n.list {
+		p.w("[")
+		p.expression(v, v.typ, false)
+		if x, ok := dims[i].(*subrange); ok && x.lo != 0 {
+			p.w("%+d", -x.lo)
+		}
+		p.w("]")
+	}
+}
+
+func (p *project) identifier(n *identifier) {
+	_, isConst := n.def.(*constantDefinition)
+	if !isConst && n.scope.isTLD {
+		p.w("%s.", p.task.rcvrName)
+	}
+	p.w("%s", p.ident(n.src))
 }
 
 func (p *project) procedureAndFunctionDeclarationPart(n *procedureAndFunctionDeclarationPart) {
@@ -131,9 +844,12 @@ func (p *project) functionDeclaration(n *functionDeclaration) {
 		return
 	}
 
-	p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, p.ident(n.functionHeading.ident.src))
+	p.w("\n\nfunc (%s *%s) %s (", p.task.rcvrName, p.task.progTypeName, p.ident(n.functionHeading.ident.src))
 	p.formalParameters(n.functionHeading.list)
-	p.w(") %s { panic(\"TODO\") }", n.functionHeading.typ.goType())
+	p.w(") (ret %s) {", n.functionHeading.typ.goType())
+	//TODO p.block(n.block, false, p.flat(n.block))
+	p.block(n.block, false)
+	p.w("\nreturn ret\n}")
 }
 
 func (p *project) formalParameters(list []*formalParameterSection) {
@@ -162,6 +878,8 @@ func (p *project) formalParameters(list []*formalParameterSection) {
 
 func (p *project) ident(s string) string {
 	switch s {
+	case "break":
+		return "break1"
 	case "package":
 		return "package1"
 	default:
@@ -176,20 +894,39 @@ func (p *project) procedureDeclaration(n *procedureDeclaration) {
 
 	p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, p.ident(n.procedureHeading.ident.src))
 	p.formalParameters(n.procedureHeading.list)
-	p.w(") { panic(\"TODO\") }")
+	p.w(") {")
+	//TODO p.block(n.block, false, p.flat(n.block))
+	p.block(n.block, false)
+	p.w("\n}")
 }
 
 func (p *project) variableDeclarationPart(n *variableDeclarationPart, tld bool) {
-	prefix := "var "
-	if tld {
-		prefix = ""
-		p.w("\n\ntype %s struct{", p.task.progTypeName)
-		defer p.w("\n}")
+	if n == nil {
+		return
 	}
-	for _, v := range n.list {
-		for _, w := range v.list {
-			p.w("\n%s%s %s", prefix, w.src, v.typ.goType())
+
+	if tld {
+		if tld {
+			p.w("\n\ntype %s struct{", p.task.progTypeName)
+			defer p.w("\n}")
 		}
+		for _, v := range n.list {
+			for _, w := range v.list {
+				p.w("\n%s %s", w.src, v.typ.goType())
+			}
+		}
+		return
+	}
+
+	for _, v := range n.list {
+		p.w("\nvar")
+		for i, w := range v.list {
+			if i != 0 {
+				p.w(",")
+			}
+			p.w(" %s", w.src)
+		}
+		p.w(" %s;", v.typ.goType())
 	}
 }
 
@@ -224,12 +961,18 @@ func (p *project) record(td *typeDefinition) {
 		switch {
 		case v.off == 0:
 			p.w("\n\nfunc (r *%s) %s() %s { return *(*%[3]s)(unsafe.Pointer(&r.variant)) }", tn, fn, ft)
+			p.w("\n\nfunc (r *%s) %s() *%s { return (*%[3]s)(unsafe.Pointer(&r.variant)) }", tn, p.lvalueName(fn), ft)
 			p.w("\n\nfunc (r *%s) %s(v %s) { *(*%[3]s)(unsafe.Pointer(&r.variant)) = v }", tn, p.setterName(fn), ft)
 		default:
 			p.w("\n\nfunc (r *%s) %s() %s { return *(*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) }", tn, fn, ft, v.off)
+			p.w("\n\nfunc (r *%s) %s() *%s { return (*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) }", tn, p.lvalueName(fn), ft, v.off)
 			p.w("\n\nfunc (r *%s) %s(v %s) { *(*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) = v }", tn, p.setterName(fn), ft, v.off)
 		}
 	}
+}
+
+func (p *project) lvalueName(s string) string {
+	return "lvalue" + strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (p *project) setterName(s string) string {

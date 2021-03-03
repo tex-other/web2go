@@ -17,6 +17,7 @@ import (
 
 var (
 	universe = scope{
+		isUniverse: true,
 		m: map[string]node{
 			"abs": &functionDeclaration{
 				functionHeading: &functionHeading{args: []typ{aReal}},
@@ -287,6 +288,9 @@ func todop(p *parser, s string, args ...interface{}) string {
 type scope struct {
 	m      map[string]node
 	parent *scope
+
+	isTLD      bool
+	isUniverse bool
 }
 
 func (s *scope) declare(p *parser, n node, nm string) {
@@ -343,6 +347,7 @@ type program struct {
 func (p *parser) program() *program {
 	var r program
 	r.scope.parent = &p.universe
+	r.scope.isTLD = true
 	r.programHeading = p.programHeading()
 	r.semi = p.mustShift(';')
 	r.block = p.block(&r.scope)
@@ -398,7 +403,7 @@ func (p *parser) block(s *scope) *block {
 		p.typeDefinitionPart(s),
 		p.variableDeclarationPart(s),
 		p.procedureAndFunctionDeclarationPart(s),
-		p.compoundStatement(s),
+		p.compoundStatement(s, true),
 	}
 }
 
@@ -409,12 +414,16 @@ type compoundStatement struct {
 	end   *tok
 }
 
-func (p *parser) compoundStatement(s *scope) *compoundStatement {
-	return &compoundStatement{
+func (p *parser) compoundStatement(s *scope, blockTop bool) *compoundStatement {
+	r := &compoundStatement{
 		p.mustShift(BEGIN),
 		p.statementList(s),
 		p.mustShift(END),
 	}
+	if blockTop && len(r.list) != 0 {
+		r.list[len(r.list)-1].isLastInBlock = true
+	}
+	return r
 }
 
 // StatementSequence = Statement { ";" Statement} .
@@ -437,6 +446,9 @@ type statement struct {
 	label *tok
 	*simpleStatement
 	*structuredStatmenent
+
+	isIf          bool
+	isLastInBlock bool
 }
 
 func (p *parser) statement(s *scope) *statement {
@@ -447,10 +459,12 @@ func (p *parser) statement(s *scope) *statement {
 	}
 	switch p.c().ch {
 	case BEGIN, IF, WHILE, REPEAT, FOR, WITH, CASE:
-		return &statement{
+		r := &statement{
 			label:                label,
 			structuredStatmenent: p.structuredStatmenent(s),
 		}
+		r.isIf = r.structuredStatmenent.isIf
+		return r
 	default:
 		return &statement{
 			label:           label,
@@ -465,6 +479,8 @@ type structuredStatmenent struct {
 	*repetitiveStatement
 	*compoundStatement
 	*conditionalStatement
+
+	isIf bool
 }
 
 func (p *parser) structuredStatmenent(s *scope) *structuredStatmenent {
@@ -472,9 +488,11 @@ func (p *parser) structuredStatmenent(s *scope) *structuredStatmenent {
 	case FOR, WHILE, REPEAT:
 		return &structuredStatmenent{repetitiveStatement: p.repetitiveStatement(s)}
 	case BEGIN:
-		return &structuredStatmenent{compoundStatement: p.compoundStatement(s)}
+		return &structuredStatmenent{compoundStatement: p.compoundStatement(s, false)}
 	case CASE, IF:
-		return &structuredStatmenent{conditionalStatement: p.conditionalStatement(s)}
+		r := &structuredStatmenent{conditionalStatement: p.conditionalStatement(s)}
+		r.isIf = r.conditionalStatement.ifStatement != nil
+		return r
 	}
 
 	p.err(p.c(), "unexpected %q, expected compound statement or conditional statement or repetitive statement or with statement", p.c().src)
@@ -526,7 +544,7 @@ func (p *parser) ifStatement(s *scope) *ifStatement {
 	return r
 }
 
-// CaseStatement = "case" Caselndex "of"
+// CaseStatement = "case" CaseIndex "of"
 //	Case { ";" Case } [";"]
 //	"end"
 type caseStatement struct {
@@ -689,6 +707,7 @@ type identifier struct {
 	*tok
 	def   node
 	scope *scope
+	typ
 }
 
 func (p *parser) identifier(s *scope) *identifier {
@@ -697,6 +716,24 @@ func (p *parser) identifier(s *scope) *identifier {
 		if r.scope, r.def = s.find(r.tok.src); r.def == nil {
 			p.err(r.tok, "undefined: %s", r.tok.src)
 		}
+	}
+	switch x := r.def.(type) {
+	case *char, *integer, *real, *boolean, *procedureDeclaration:
+		// nop
+	case *typeDefinition:
+		r.typ = x.typ
+	case *variableDeclaration:
+		r.typ = x.typ
+	case *functionDeclaration:
+		r.typ = x.typ
+	case *constantDefinition:
+		r.typ = x.literal.typ()
+	case *valueParameterSpecification:
+		r.typ = x.typ
+	case *variableParameterSpecification:
+		r.typ = x.typ
+	default:
+		panic(todo("%T", x))
 	}
 	return r
 }
@@ -717,12 +754,14 @@ type simpleStatement struct {
 	*assignmentStatement
 	*procedureStatement
 	*gotoStatement
+
+	isEmpty bool
 }
 
 func (p *parser) simpleStatement(s *scope) *simpleStatement {
 	switch p.c().ch {
 	case ';', END:
-		return &simpleStatement{}
+		return &simpleStatement{isEmpty: true}
 	case GOTO:
 		return &simpleStatement{gotoStatement: p.gotoStatement()}
 	case IDENTIFIER:
@@ -1334,6 +1373,7 @@ type variable struct {
 	*componentVariable
 	deref *variable
 	typ
+	*field
 }
 
 func (p *parser) variable(s *scope) (r *variable) {
@@ -1352,7 +1392,7 @@ func (p *parser) variable(s *scope) (r *variable) {
 		case *variableParameterSpecification:
 			r.typ = x.typ
 		default:
-			p.err(r.identifier, "not a variable: %s", r.identifier.src)
+			p.err(r.identifier.tok, "not a variable: %s", r.identifier.src)
 		}
 		for {
 			switch p.c().ch {
@@ -1362,6 +1402,7 @@ func (p *parser) variable(s *scope) (r *variable) {
 			case '.':
 				r = &variable{componentVariable: p.componentVariable(s, r)}
 				r.typ = r.componentVariable.typ
+				r.field = r.componentVariable.field
 			case '^':
 				elem := typ(aInteger)
 				switch x := r.typ.(type) {
@@ -1389,6 +1430,7 @@ type componentVariable struct {
 	*indexedVariable
 	*fieldDesignator
 	typ
+	*field
 }
 
 func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
@@ -1400,6 +1442,7 @@ func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 	case '.':
 		r := &componentVariable{fieldDesignator: p.fieldDesignator(v)}
 		r.typ = r.fieldDesignator.typ
+		r.field = r.fieldDesignator.field
 		return r
 	}
 
@@ -1410,15 +1453,18 @@ func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 
 // FieldDesignator
 type fieldDesignator struct {
+	*variable
 	dot   *tok
 	ident *tok
 	typ
+	*field
 }
 
 func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 	r := &fieldDesignator{
-		dot:   p.mustShift('.'),
-		ident: p.mustShift(IDENTIFIER),
+		variable: v,
+		dot:      p.mustShift('.'),
+		ident:    p.mustShift(IDENTIFIER),
 	}
 	fieldType := typ(aInteger)
 	if x, ok := v.typ.(*record); ok {
@@ -1429,6 +1475,7 @@ func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 		}
 
 		fieldType = fld.typ
+		r.field = fld
 	} else {
 		p.err(p.c(), "selector requires record type: %s", r.typ)
 	}
@@ -1438,6 +1485,7 @@ func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 
 // IndexedVariahle = ArrayVariable "[" Index { "," Index } "]" .
 type indexedVariable struct {
+	*variable
 	lbrace *tok
 	list   []*expression
 	rbrace *tok
@@ -1452,6 +1500,7 @@ func (p *parser) indexedVariable(s *scope, v *variable) *indexedVariable {
 		p.err(p.c(), "indexing requires array type: %s", v.typ)
 	}
 	return &indexedVariable{
+		v,
 		p.mustShift('['),
 		p.expressionList(s, nil, false),
 		p.mustShift(']'),
@@ -2197,7 +2246,7 @@ func (n *variantSelector) collect(m map[string]*field) error {
 		return fmt.Errorf("duplicated field: %s", nm)
 	}
 
-	m[nm] = &field{typ: n.typ, isVariant: true}
+	m[nm] = &field{typ: n.typ}
 	return nil
 }
 
@@ -2356,7 +2405,7 @@ func (p *parser) simpleType(s *scope) *simpleType {
 			case typ:
 				r.typ = x
 			default:
-				p.err(r.identifier, "not a type: %s", r.identifier.src)
+				p.err(r.identifier.tok, "not a type: %s", r.identifier.src)
 			}
 			return r
 		}

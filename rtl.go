@@ -35,4 +35,22 @@ package main
 
 /* CUT HERE */
 
+func chr(i int32) byte { return byte(i) }
+
+func odd(i int32) bool { return i&1 != 0 }
+
+func write(args ...interface{}) {
+	panic("TODO")
+}
+
+func writeln(args ...interface{}) {
+	panic("TODO")
+}
+
 type pasFile struct{} //TODO
+
+func (f *pasFile) byte() byte {
+	panic("TODO")
+}
+
+type vaWidth int

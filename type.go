@@ -63,7 +63,7 @@ type typ interface {
 }
 
 type ordinal interface {
-	cardinality() uintptr
+	cardinality() uint64
 }
 
 type packer interface {
@@ -120,7 +120,7 @@ type char struct {
 
 func (t *char) String() string              { return "char" }
 func (t *char) cType() string               { return "char" }
-func (t *char) cardinality() uintptr        { return math.MaxUint8 + 1 }
+func (t *char) cardinality() uint64         { return math.MaxUint8 + 1 }
 func (t *char) eq(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) ge(rhs relator) (typ, error) { return aBoolean, nil }
 func (t *char) goType() string              { return "byte" }
@@ -149,7 +149,7 @@ func (t *integer) String() string                   { return "integer" }
 func (t *integer) add(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 func (t *integer) and(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *integer) cType() string                    { return "int" }
-func (t *integer) cardinality() uintptr             { return math.MaxUint32 + 1 }
+func (t *integer) cardinality() uint64              { return math.MaxUint32 + 1 }
 func (t *integer) div(rhs multiplier) (typ, error)  { return aReal, nil }
 func (t *integer) eq(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *integer) ge(rhs relator) (typ, error)      { return aBoolean, nil }
@@ -258,7 +258,7 @@ func (t *boolean) String() string                   { return "boolean" }
 func (t *boolean) add(rhs adder) (typ, error)       { return ndefOp(t) }
 func (t *boolean) and(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *boolean) cType() string                    { return "char" }
-func (t *boolean) cardinality() uintptr             { return 2 }
+func (t *boolean) cardinality() uint64              { return 2 }
 func (t *boolean) div(rhs multiplier) (typ, error)  { return ndefOp(t) }
 func (t *boolean) goType() string                   { return "bool" }
 func (t *boolean) idiv(rhs multiplier) (typ, error) { return ndefOp(t) }
@@ -285,7 +285,7 @@ type subrange struct {
 	sz     uintptr
 	cNm    string
 	goNm   string
-	card   uintptr
+	card   uint64
 }
 
 func newSubrange(lo, hi int) (*subrange, error) {
@@ -294,7 +294,7 @@ func newSubrange(lo, hi int) (*subrange, error) {
 		return r, fmt.Errorf("invalid subrange, lower bound above higher bound")
 	}
 
-	r.card = uintptr(hi - lo + 1)
+	r.card = uint64(hi - lo + 1)
 	switch {
 	case lo >= 0 && hi >= 0:
 		switch {
@@ -306,7 +306,7 @@ func newSubrange(lo, hi int) (*subrange, error) {
 			r.cNm = "unsigned short"
 			r.goNm = "uint16"
 			r.sz = unsafe.Sizeof(uint16(0))
-		case hi <= math.MaxUint32:
+		case int64(hi) <= math.MaxUint32:
 			r.cNm = "unsigned"
 			r.goNm = "uint32"
 			r.sz = unsafe.Sizeof(uint32(0))
@@ -338,7 +338,7 @@ func (t *subrange) String() string                   { return fmt.Sprintf("%d..%
 func (t *subrange) add(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 func (t *subrange) and(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *subrange) cType() string                    { return t.cNm }
-func (t *subrange) cardinality() uintptr             { return t.card }
+func (t *subrange) cardinality() uint64              { return t.card }
 func (t *subrange) div(rhs multiplier) (typ, error)  { return aReal, nil }
 func (t *subrange) eq(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *subrange) ge(rhs relator) (typ, error)      { return aBoolean, nil }
@@ -483,6 +483,7 @@ func newRecord(goos, goarch string, fieldList *fieldList, tag string) (*record, 
 			}
 
 			v.off = f.Offset()
+			v.isVariant = true
 		}
 	}
 	b.Reset()
@@ -544,7 +545,7 @@ func newArray(n node, dims []*typeNode, elem typ) (*array, error) {
 			return r, fmt.Errorf("ordinal type required: %s", v.typ.String())
 		}
 
-		r.sz *= ordinal.cardinality()
+		r.sz *= uintptr(ordinal.cardinality())
 	}
 	if r.sz == 0 {
 		return r, fmt.Errorf("internal error: array has zero size")

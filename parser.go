@@ -93,14 +93,6 @@ var (
 	}
 )
 
-func builtinFunc(args []typ, result typ) *functionDeclaration {
-	r := &functionDeclaration{
-		functionHeading: &functionHeading{args: args},
-		typ:             result,
-	}
-	return r
-}
-
 func parse(t *task, b []byte, name string) (*program, error) {
 	p, err := newParser(t, b, name)
 	if err != nil {
@@ -1173,7 +1165,7 @@ func (p *parser) unsignedConstant(s *scope) *unsignedConstant {
 		switch x := r.identifier.def.(type) {
 		case *constantDefinition:
 			switch y := x.literal.typ().(type) {
-			case *boolean, *integer /*TODO , *pasString*/ :
+			case *boolean, *integer:
 				r.literal = x.literal
 			case *array:
 				if y.isString {
@@ -1426,7 +1418,7 @@ type fieldDesignator struct {
 func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 	r := &fieldDesignator{
 		dot:   p.mustShift('.'),
-		ident: p.mustShift(IDENTIFIER), //TODO
+		ident: p.mustShift(IDENTIFIER),
 	}
 	fieldType := typ(aInteger)
 	if x, ok := v.typ.(*record); ok {
@@ -2507,7 +2499,7 @@ func (p *parser) constantDefinition(s *scope) *constantDefinition {
 	return r
 }
 
-// Constant = [Sign] ( UnsignedNumher | ConstantIdentifier) | CharacterString .
+// Constant = [ Sign ] ( UnsignedNumher | ConstantIdentifier) | CharacterString .
 type constant struct {
 	noder
 	sign  *tok

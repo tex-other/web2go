@@ -123,7 +123,6 @@ func (p *project) procedureAndFunctionDeclarationPart(n *procedureAndFunctionDec
 
 	if n.functionDeclaration != nil {
 		p.functionDeclaration(n.functionDeclaration)
-		return
 	}
 }
 

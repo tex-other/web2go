@@ -40,7 +40,7 @@ var (
 	aReal     = &real{}
 	aRecord   = &record{}
 	aSubrange = &subrange{}
-	aString   = &array{ // pseudo type
+	aString   = &array{ // pseudo type used by predeclared built-ins only.
 		dims:     []typ{aInteger},
 		elem:     aChar,
 		sz:       0, // indicates open array, invalid otherwise
@@ -422,7 +422,7 @@ type field struct {
 type record struct {
 	noder
 	cachedCType  string
-	cachedGoType string //TODO
+	cachedGoType string
 	ccType       cc.Type
 	fields       map[string]*field
 	sz           uintptr

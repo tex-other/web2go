@@ -21,13 +21,13 @@ var (
 		m: map[string]node{
 			"abs": &functionDeclaration{
 				functionHeading: &functionHeading{args: []typ{aReal}},
-				typ:             aInteger,
+				typ:             aReal,
 			},
 			"boolean": &boolean{},
 			"break": &procedureDeclaration{
 				procedureHeading: &procedureHeading{args: []typ{aFile}},
 			},
-			"breakin": &procedureDeclaration{
+			"break_in": &procedureDeclaration{
 				procedureHeading: &procedureHeading{args: []typ{aFile, aBoolean}},
 			},
 			"char": &char{},
@@ -59,6 +59,9 @@ var (
 				functionHeading: &functionHeading{args: []typ{aInteger}},
 				typ:             aBoolean,
 			},
+			"pasjumpout": &procedureDeclaration{
+				procedureHeading: &procedureHeading{},
+			},
 			"put": &procedureDeclaration{
 				procedureHeading: &procedureHeading{args: []typ{aFile}},
 			},
@@ -66,7 +69,7 @@ var (
 				procedureHeading: &procedureHeading{},
 				isRead:           true,
 			},
-			"readln": &procedureDeclaration{
+			"read_ln": &procedureDeclaration{
 				procedureHeading: &procedureHeading{},
 				isRead:           true,
 			},
@@ -86,7 +89,7 @@ var (
 				procedureHeading: &procedureHeading{},
 				isWrite:          true,
 			},
-			"writeln": &procedureDeclaration{
+			"write_ln": &procedureDeclaration{
 				procedureHeading: &procedureHeading{},
 				isWrite:          true,
 			},
@@ -693,7 +696,7 @@ type forStatement struct {
 func (p *parser) forStatement(s *scope) *forStatement {
 	return &forStatement{
 		p.mustShift(FOR),
-		p.identifier(s),
+		p.identifier(s, true),
 		p.mustShift(ASSIGN),
 		p.expression(s),
 		p.toOrDownto(),
@@ -710,12 +713,14 @@ type identifier struct {
 	typ
 }
 
-func (p *parser) identifier(s *scope) *identifier {
+func (p *parser) identifier(s *scope, useVar bool) *identifier {
 	r := &identifier{tok: p.mustShift(IDENTIFIER)}
-	if r.tok != nil {
-		if r.scope, r.def = s.find(r.tok.src); r.def == nil {
-			p.err(r.tok, "undefined: %s", r.tok.src)
-		}
+	if r.tok == nil {
+		return r
+	}
+
+	if r.scope, r.def = s.find(r.tok.src); r.def == nil {
+		p.err(r.tok, "undefined: %s", r.tok.src)
 	}
 	switch x := r.def.(type) {
 	case *char, *integer, *real, *boolean, *procedureDeclaration:
@@ -723,6 +728,9 @@ func (p *parser) identifier(s *scope) *identifier {
 	case *typeDefinition:
 		r.typ = x.typ
 	case *variableDeclaration:
+		if useVar && !x.scope.isTLD {
+			x.used[r.tok.src] = struct{}{}
+		}
 		r.typ = x.typ
 	case *functionDeclaration:
 		r.typ = x.typ
@@ -732,8 +740,6 @@ func (p *parser) identifier(s *scope) *identifier {
 		r.typ = x.typ
 	case *variableParameterSpecification:
 		r.typ = x.typ
-	default:
-		panic(todo("%T", x))
 	}
 	return r
 }
@@ -802,7 +808,7 @@ type procedureStatement struct {
 
 func (p *parser) procedureStatement(s *scope) *procedureStatement {
 	c0 := p.c()
-	r := &procedureStatement{identifier: p.identifier(s)}
+	r := &procedureStatement{identifier: p.identifier(s, true)}
 	var args []typ
 	var isRead, isWrite bool
 	switch x := r.identifier.def.(type) {
@@ -892,7 +898,7 @@ type assignmentStatement struct {
 
 func (p *parser) assignmentStatement(s *scope) *assignmentStatement {
 	r := &assignmentStatement{
-		p.variable(s),
+		p.variable(s, false),
 		p.mustShift(ASSIGN),
 		p.expression(s),
 	}
@@ -908,17 +914,24 @@ type expression struct {
 	relOp *tok
 	rhs   *simpleExpression
 	typ
+	literal
+
+	isConst bool
 }
 
 func (p *parser) expression(s *scope) *expression {
 	c0 := p.c()
 	r := &expression{simpleExpression: p.simpleExpression(s)}
 	r.typ = r.simpleExpression.typ
+	r.literal = r.simpleExpression.literal
+	r.isConst = r.simpleExpression.isConst
 	switch p.c().ch {
 	case '=', NE, '<', LE, '>', GE, IN:
 		r.relOp = p.shift()
 		r.rhs = p.simpleExpression(s)
 		r.typ = p.relOp(r.relOp, r.typ, r.rhs.typ, r.relOp.ch)
+		r.literal = nil
+		r.isConst = true
 	}
 	if r.typ == nil {
 		p.err(c0, "expression type not resolved")
@@ -979,12 +992,17 @@ type term struct {
 	*factor
 	list []termListItem
 	typ
+	literal
+
+	isConst bool
 }
 
 // a*b*c = (a*b)*c
 func (p *parser) term(s *scope) *term {
 	r := &term{factor: p.factor(s)}
 	r.typ = r.factor.typ
+	r.literal = r.factor.literal
+	r.isConst = r.factor.unsignedConstant != nil
 	for {
 		switch p.c().ch {
 		case '*', '/', DIV, MOD, AND:
@@ -994,6 +1012,8 @@ func (p *parser) term(s *scope) *term {
 			}
 			r.typ = p.mulOp(item.mulOp, r.typ, item.factor.typ, item.mulOp.ch)
 			r.list = append(r.list, item)
+			r.literal = nil
+			r.isConst = false
 		default:
 			return r
 		}
@@ -1050,6 +1070,9 @@ type factor struct {
 	*expression
 	not *factor
 	typ
+	literal
+
+	isConst bool
 }
 
 func (p *parser) factor(s *scope) *factor {
@@ -1058,6 +1081,7 @@ func (p *parser) factor(s *scope) *factor {
 	case INT_LITERAL, STR_LITERAL, REAL_LITERAL:
 		r := &factor{unsignedConstant: p.unsignedConstant(s)}
 		r.typ = r.unsignedConstant.literal.typ()
+		r.literal = r.unsignedConstant.literal
 		return r
 	case IDENTIFIER:
 		id := p.shift()
@@ -1071,28 +1095,29 @@ func (p *parser) factor(s *scope) *factor {
 		switch _, def := s.find(id.src); x := def.(type) {
 		case *variableDeclaration:
 			p.unget(id)
-			r := &factor{variable: p.variable(s)}
+			r := &factor{variable: p.variable(s, true)}
 			r.typ = r.variable.typ
 			return r
 		case *constantDefinition:
 			p.unget(id)
 			r := &factor{unsignedConstant: p.unsignedConstant(s)}
 			r.typ = x.constant.literal.typ()
+			r.isConst = true
 			return r
 		case *valueParameterSpecification:
 			p.unget(id)
-			r := &factor{variable: p.variable(s)}
+			r := &factor{variable: p.variable(s, false)}
 			r.typ = r.variable.typ
 			return r
 		case *variableParameterSpecification:
 			p.unget(id)
-			r := &factor{variable: p.variable(s)}
+			r := &factor{variable: p.variable(s, false)}
 			r.typ = r.variable.typ
 			return r
 		case *functionDeclaration:
 			p.unget(id)
-			r := &factor{variable: p.variable(s)}
-			r.typ = r.variable.typ
+			r := &factor{functionDesignator: p.functionDesignator(s)}
+			r.typ = r.functionDesignator.typ
 			return r
 		default:
 			p.err(c0, "internal error: %T", x)
@@ -1138,19 +1163,23 @@ func (p *parser) not(n node, op typ) (r typ) {
 type functionDesignator struct {
 	*identifier
 	list []*expression
+	args []typ
 	typ
+
+	replace string
 }
 
 func (p *parser) functionDesignator(s *scope) *functionDesignator {
 	c0 := p.c()
-	r := &functionDesignator{identifier: p.identifier(s)}
+	r := &functionDesignator{identifier: p.identifier(s, true)}
 	var args []typ
 	switch x := r.identifier.def.(type) {
 	case nil:
 		// handled in p.identifier
 	case *functionDeclaration:
 		r.typ = x.typ
-		args = x.functionHeading.args
+		args = x.functionHeading.args //TODO-
+		r.args = x.functionHeading.args
 	default:
 		p.err(c0, "not a function: %s", r.identifier.src)
 	}
@@ -1159,6 +1188,20 @@ func (p *parser) functionDesignator(s *scope) *functionDesignator {
 	case nil:
 		// handled in p.identifier
 	case *functionDeclaration:
+		if r.identifier.scope.isUniverse {
+			switch r.identifier.src {
+			case "abs":
+				if len(r.list) != 0 {
+					if _, ok := r.list[0].typ.(ordinal); ok {
+						r.replace = "iabs"
+						r.args = []typ{aInteger}
+						r.typ = aInteger
+						return r
+					}
+				}
+			}
+		}
+
 		r.typ = x.typ
 	default:
 		p.err(c0, "not a function: %s", r.identifier.src)
@@ -1200,7 +1243,7 @@ func (p *parser) unsignedConstant(s *scope) *unsignedConstant {
 		}
 		return r
 	case IDENTIFIER:
-		r := &unsignedConstant{identifier: p.identifier(s)}
+		r := &unsignedConstant{identifier: p.identifier(s, false)}
 		switch x := r.identifier.def.(type) {
 		case *constantDefinition:
 			switch y := x.literal.typ().(type) {
@@ -1267,6 +1310,9 @@ type simpleExpression struct {
 	*term
 	list []simpleExpressionListItem
 	typ
+	literal
+
+	isConst bool
 }
 
 func (p *parser) simpleExpression(s *scope) *simpleExpression {
@@ -1276,7 +1322,9 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 		sign: sign,
 		term: p.term(s),
 	}
+	r.literal = r.term.literal
 	r.typ = r.term.typ
+	r.isConst = r.term.isConst
 	if sign != nil && sign.src == "-" {
 		r.typ = p.negType(c0, r.typ)
 	}
@@ -1289,6 +1337,8 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 			}
 			r.typ = p.addOp(item.addOp, r.typ, item.term.typ, item.addOp.ch)
 			r.list = append(r.list, item)
+			r.literal = nil
+			r.isConst = false
 		default:
 			return r
 		}
@@ -1376,14 +1426,17 @@ type variable struct {
 	*field
 }
 
-func (p *parser) variable(s *scope) (r *variable) {
+func (p *parser) variable(s *scope, useVar bool) (r *variable) {
 	switch p.c().ch {
 	case IDENTIFIER:
-		r = &variable{identifier: p.identifier(s)}
+		r = &variable{identifier: p.identifier(s, useVar)}
 		switch x := r.identifier.def.(type) {
 		case nil:
 			// handled in p.identifier
 		case *variableDeclaration:
+			if useVar && !x.scope.isTLD {
+				x.used[r.identifier.src] = struct{}{}
+			}
 			r.typ = x.typ
 		case *valueParameterSpecification:
 			r.typ = x.typ
@@ -1425,7 +1478,7 @@ func (p *parser) variable(s *scope) (r *variable) {
 	return nil
 }
 
-// ComponentVariable = IndexedVariahle | FieldDesignator .
+// ComponentVariable = IndexedVariable | FieldDesignator .
 type componentVariable struct {
 	*indexedVariable
 	*fieldDesignator
@@ -1468,7 +1521,7 @@ func (p *parser) fieldDesignator(v *variable) *fieldDesignator {
 	}
 	fieldType := typ(aInteger)
 	if x, ok := v.typ.(*record); ok {
-		fld, ok := x.fields[r.ident.src]
+		fld, ok := x.fields[goIdent(r.ident.src)]
 		if !ok {
 			p.err(r.dot, "unknown field: %s", r.ident.src)
 			return nil
@@ -1796,6 +1849,8 @@ type variableDeclaration struct {
 	colon *tok
 	*typeNode
 	typ
+	used map[string]struct{}
+	*scope
 }
 
 func (n *variableDeclaration) Position() token.Position { return n.list[0].Position() }
@@ -1805,6 +1860,8 @@ func (p *parser) variableDeclaration(s *scope) *variableDeclaration {
 		list:     p.identifierList(),
 		colon:    p.mustShift(':'),
 		typeNode: p.typeNode(s, ""),
+		used:     map[string]struct{}{},
+		scope:    s,
 	}
 	if r.typ = r.typeNode.typ; r.typ == nil {
 		p.err(r.list[0], "variable type not resolved: %s", r.list[0].src)
@@ -2017,7 +2074,7 @@ type fieldList struct {
 func (n *fieldList) collect(m map[string]*field) (list []*field, err error) {
 	for _, v := range n.fixedPart {
 		for _, w := range v.list {
-			nm := w.src
+			nm := goIdent(w.src)
 			if _, ok := m[nm]; ok {
 				return nil, fmt.Errorf("duplicate field: %s", nm)
 			}
@@ -2310,7 +2367,7 @@ type recordSection struct {
 
 func (n *recordSection) structLiteral(w strutil.Formatter) error {
 	for _, v := range n.list {
-		w.Format("\n%s\t%s", v.src, n.typ.goType())
+		w.Format("\n%s\t%s", goIdent(v.src), n.typ.goType())
 	}
 	return nil
 }
@@ -2396,7 +2453,7 @@ func (p *parser) simpleType(s *scope) *simpleType {
 		id := p.shift()
 		if p.c().ch != DD {
 			p.unget(id)
-			r := &simpleType{identifier: p.identifier(s)}
+			r := &simpleType{identifier: p.identifier(s, false)}
 			switch x := r.identifier.def.(type) {
 			case nil:
 				// already reported
@@ -2746,4 +2803,49 @@ func (p *parser) labelList() (r []*tok) {
 		r = append(r, tok)
 	}
 	return r
+}
+
+func promote(a, b typ) typ {
+	switch x := a.(type) {
+	case *integer:
+		switch y := b.(type) {
+		case *integer:
+			return a
+		case *subrange:
+			return a
+		case *real:
+			return b
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *subrange:
+		switch y := b.(type) {
+		case *integer:
+			return b
+		case *subrange:
+			if a.size() > b.size() {
+				return a
+			}
+
+			return b
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *char:
+		switch y := b.(type) {
+		case *char:
+			return a
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	case *real:
+		switch y := b.(type) {
+		case *real:
+			return a
+		default:
+			panic(todo("%T %T", x, y))
+		}
+	default:
+		panic(todo("%T", x))
+	}
 }

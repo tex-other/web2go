@@ -58,13 +58,22 @@
 //
 // 	-o output-file
 //
-// Explicitly set the Go output file name. Existing files will be overwritten
+// Set the Go output file name. Existing files will be overwritten
 // without asking.
 //
 //	-p file-name
 //
 // When processing a .web file, keep the resulting .p file in file-name.
 // Existing files will be overwritten without asking.
+//
+//	-pkg pkg-name
+//
+// When producing a library (see below) set the package name to pkg-name. Has
+// no effect otherwise.
+//
+//	-lib
+//
+// Produce a library instead of a command.
 //
 //	-e
 //
@@ -91,6 +100,38 @@ import (
 	"runtime/debug"
 	"strings"
 )
+
+var (
+	goIdents = map[string]string{}
+)
+
+func goIdent(s string) (t string) {
+	if t := goIdents[s]; t != "" {
+		return t
+	}
+
+	defer func() { goIdents[s] = t }()
+
+	if strings.ContainsRune(s, '_') {
+		a := strings.Split(s, "_")
+		for i, v := range a[1:] {
+			a[i+1] = strings.ToUpper(string(rune(v[0]))) + v[1:]
+		}
+		t := strings.Join(a, "")
+		return t
+	}
+
+	switch s {
+	case "break":
+		return "break1"
+	case "error":
+		return "error1"
+	case "package":
+		return "package1"
+	default:
+		return s
+	}
+}
 
 func fatalf(stack bool, s string, args ...interface{}) {
 	if stack {
@@ -161,9 +202,11 @@ func trc(s string, args ...interface{}) string { //TODO-
 func main() {
 	task := newTask(os.Args)
 	flag.BoolVar(&task.e, "e", false, "show all errors")
+	flag.BoolVar(&task.lib, "lib", false, "produce an importable package instead of a command")
 	flag.BoolVar(&task.stack, "stack", false, "show dying stack traces")
 	flag.StringVar(&task.o, "o", "", ".go output file")
 	flag.StringVar(&task.p, "p", "", ".p output file")
+	flag.StringVar(&task.pkgName, "pkg", "tex", "name the output package, used only with -lib")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fatal(task.stack, "missing input file argument")
@@ -181,6 +224,9 @@ func main() {
 		fatal(task.stack, "at most two input files expected")
 	}
 
+	if !task.lib {
+		task.pkgName = "main"
+	}
 	if task.o == "" {
 		fatal(task.stack, "missing output file argument")
 	}
@@ -199,12 +245,14 @@ type task struct {
 	in           string // tex.web, for example
 	o            string // -o
 	p            string // -p
+	pkg          string // -pkg
 	pkgName      string
 	progTypeName string
 	rcvrName     string
 	tempDir      string
 
 	e     bool // -e
+	lib   bool // -lib
 	stack bool // -stack
 }
 
@@ -269,7 +317,7 @@ func (t *task) web2p() ([]byte, error) {
 		return nil, err
 	}
 
-	args := []string{t.in}
+	args := []string{"-underline", t.in}
 	if t.changeFile != "" {
 		args = append(args, t.changeFile)
 	}

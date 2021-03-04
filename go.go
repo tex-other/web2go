@@ -13,11 +13,16 @@ import (
 	"strings"
 )
 
+const ( // tex.pdf pg.5, §6
+	endOfTeX = "9998"
+	finalEnd = "9999"
+)
+
 type project struct {
-	task      *task
-	out       io.Writer
 	errs      []string
 	nextLabel int
+	out       io.Writer
+	task      *task
 
 	closed bool
 }
@@ -101,10 +106,13 @@ func (p *project) main(program *program) (err error) {
 	p.w(`
 package %s
 
-import "unsafe"
+import (
+	"fmt"
+	"math"
+	"unsafe"
+)
 
 `, p.task.pkgName)
-	//TODO p.block(program.block, true, p.flat(program.block))
 	p.block(program.block, true)
 	rtl := assets["/rtl.go"]
 	const tag = "/* CUT HERE */"
@@ -113,21 +121,6 @@ import "unsafe"
 	p.w("%s", rtl)
 	return
 }
-
-// func (p *project) flat(n *block) bool {
-// 	ldp := n.labelDeclarationPart
-// 	if ldp == nil {
-// 		return false
-// 	}
-//
-// 	if len(ldp.list) > 1 {
-// 		return true
-// 	}
-//
-// 	// block has exactly one label
-// 	list := n.compoundStatement.list
-// 	return list[len(list)-1].label == nil
-// }
 
 func (p *project) block(n *block, tld bool) {
 	p.constantDefinitionPart(n.constantDefinitionPart)
@@ -142,7 +135,12 @@ func (p *project) block(n *block, tld bool) {
 
 func (p *project) compoundStatement(n *compoundStatement, tld, braces, braced bool) {
 	if tld {
-		p.w("\n\nfunc (%s *%s) main() {", p.task.rcvrName, p.task.progTypeName)
+		switch {
+		case p.task.lib:
+			p.w("\n\nfunc (%s *%s) main() {", p.task.rcvrName, p.task.progTypeName)
+		default:
+			p.w("\n\nfunc main() {")
+		}
 		defer p.w("\n}")
 	}
 	if braces {
@@ -159,11 +157,15 @@ func (p *project) statement(n *statement, braced bool) {
 	if !braced {
 		s = "\n"
 	}
-	//TODO if flat && n.label != nil {
 	if n.label != nil {
-		p.w("%s", s)
-		s = ""
-		p.w("%s:", p.label(n.label))
+		switch n.label.src {
+		case endOfTeX, finalEnd:
+			// nop
+		default:
+			p.w("%s", s)
+			s = ""
+			p.w("%s:", p.label(n.label))
+		}
 	}
 	if n.simpleStatement != nil {
 		if n.simpleStatement.isEmpty {
@@ -209,38 +211,6 @@ func (p *project) conditionalStatement(n *conditionalStatement) {
 }
 
 func (p *project) ifStatement(n *ifStatement) {
-	// if flat {
-	// 	// if !expr goto Z
-	// 	//      if-statetement
-	// 	// Z:
-	// 	if n.else_ == nil {
-	// 		z := p.newLabel()
-	// 		p.w("if !(")
-	// 		p.expression(n.expression, false)
-	// 		p.w(") { goto flat%d };", z)
-	// 		p.statement(n.statement, true, true)
-	// 		p.w("; flat%d:", z)
-	// 		return
-	// 	}
-
-	// 	// if !expr goto A
-	// 	//      if-statetement
-	// 	//      goto Z
-	// 	// A:
-	// 	//      else-statement
-	// 	// Z:
-	// 	a := p.newLabel()
-	// 	z := p.newLabel()
-	// 	p.w("if !(")
-	// 	p.expression(n.expression, false)
-	// 	p.w(") { goto flat%d };", a)
-	// 	p.statement(n.statement, true, true)
-	// 	p.w("; goto flat%d; flat%d:", z, a)
-	// 	p.statement(n.elseStatement, false, true)
-	// 	p.w("; flat%d:", z)
-	// 	return
-	// }
-
 	p.w("if ")
 	p.expression(n.expression, aBoolean, false)
 	p.w(" {")
@@ -262,11 +232,6 @@ func (p *project) ifStatement(n *ifStatement) {
 }
 
 func (p *project) caseStatement(n *caseStatement) {
-	// if flat {
-	// 	p.w("/*TODO.caseStatement.flat*/")
-	// 	return
-	// }
-
 	p.w("switch ")
 	p.expression(n.expression, n.expression.typ, false)
 	p.w(" {")
@@ -308,11 +273,6 @@ func (p *project) repetitiveStatement(n *repetitiveStatement) {
 }
 
 func (p *project) repeatStatement(n *repeatStatement) {
-	// if flat {
-	// 	p.w("/*TODO repeatStatement.flat*/")
-	// 	return
-	// }
-
 	p.w("for {")
 	for _, v := range n.list {
 		p.statement(v, false)
@@ -323,21 +283,6 @@ func (p *project) repeatStatement(n *repeatStatement) {
 }
 
 func (p *project) whileStatement(n *whileStatement) {
-	// if flat {
-	// 	// A: if !expr goto Z
-	// 	//	statement
-	// 	//	goto A
-	// 	// Z:
-	// 	a := p.newLabel()
-	// 	z := p.newLabel()
-	// 	p.w("flat%d: if !(", a)
-	// 	p.expression(n.expression, false)
-	// 	p.w(") { goto flat%d };", z)
-	// 	p.statement(n.statement, true, false)
-	// 	p.w(";goto flat%d; flat%d:", a, z)
-	// 	return
-	// }
-
 	p.w("for ")
 	p.expression(n.expression, aBoolean, false)
 	p.w(" {")
@@ -346,11 +291,6 @@ func (p *project) whileStatement(n *whileStatement) {
 }
 
 func (p *project) forStatement(n *forStatement) {
-	// if flat {
-	// 	p.w("/*TODO forStatement.flat*/")
-	// 	return
-	// }
-
 	loopVarType := n.identifier.typ
 	p.w("for ")
 	p.identifier(n.identifier)
@@ -393,14 +333,14 @@ func (p *project) simpleStatement(n *simpleStatement) {
 }
 
 func (p *project) gotoStatement(n *gotoStatement) {
-	// if flat {
-	// 	p.w("goto %s", p.label(n.label))
-	// 	return
-	// }
-
-	// p.w("return")
-
-	p.w("goto %s", p.label(n.label))
+	switch n.label.src {
+	case endOfTeX:
+		p.w("panic(pasEndOfTeX)")
+	case finalEnd:
+		p.w("panic(pasFinalEnd)")
+	default:
+		p.w("goto %s", p.label(n.label))
+	}
 }
 
 func (p *project) procedureStatement(n *procedureStatement) {
@@ -455,7 +395,7 @@ func (p *project) assignmentStatement(n *assignmentStatement) {
 			if lt.canBeAssignedFrom(rt) {
 				if rt.isString {
 					p.w("copy(")
-					p.variable(n.variable, true, 0)
+					p.rVariable(n.variable)
 					p.w("[:], ")
 					p.expression(n.expression, n.variable.typ, false)
 					p.w(")")
@@ -469,30 +409,98 @@ func (p *project) assignmentStatement(n *assignmentStatement) {
 		}
 	}
 
-	switch p.variable(n.variable, true, 0) {
-	case true:
-		p.w("(")
-		p.expression(n.expression, n.variable.typ, false)
-		p.w(")")
-	default:
+	if fld := n.variable.field; fld != nil && fld.isVariant || n.variable.deref != nil {
+		p.w("*")
+	}
+	if p.lVariable(n.variable) {
 		p.w(" = ")
-		p.expression(n.expression, n.variable.typ, false)
+	}
+	p.expression(n.expression, n.variable.typ, false)
+}
+
+func (p *project) lVariable(n *variable) (used bool) {
+	if n.identifier != nil {
+		switch n.identifier.def.(type) {
+		case *functionDeclaration:
+			p.w("ret")
+		default:
+			if !n.identifier.scope.isTLD {
+				if x, ok := n.identifier.def.(*variableDeclaration); ok {
+					if _, ok := x.used[n.identifier.src]; !ok {
+						return false
+					}
+				}
+			}
+
+			p.identifier(n.identifier)
+		}
+		return true
+	}
+
+	if n.componentVariable != nil {
+		p.lComponentVariable(n.componentVariable)
+		return true
+	}
+
+	p.lDeref(n.deref)
+	return true
+}
+
+func (p *project) lDeref(n *variable) {
+	p.lVariable(n)
+	p.w(".%s()", p.lvalueName(n.typ.(*file).component.goType()))
+}
+
+func (p *project) lComponentVariable(n *componentVariable) {
+	if n.indexedVariable != nil {
+		p.lIndexedVariable(n.indexedVariable)
+		return
+	}
+
+	p.lFieldDesignator(n.fieldDesignator)
+}
+
+func (p *project) lFieldDesignator(n *fieldDesignator) {
+	p.lVariable(n.variable)
+	switch {
+	case n.field.isVariant:
+		p.w(".%s()", p.lvalueName(n.ident.src))
+	default:
+		p.w(".%s", goIdent(n.ident.src))
+	}
+}
+
+func (p *project) lIndexedVariable(n *indexedVariable) {
+	p.lVariable(n.variable)
+	dims := n.variable.typ.(*array).dims
+	for i, v := range n.list {
+		p.w("[")
+		p.expression(v, v.typ, false)
+		if x, ok := dims[i].(*subrange); ok && x.lo != 0 {
+			p.w("%+d", -x.lo)
+		}
+		p.w("]")
 	}
 }
 
 func (p *project) expression(n *expression, t typ, parens bool) {
-	defer p.w("%s", p.convert(n.typ, t))
-	if parens {
-		p.w("(")
-		defer p.w(")")
-	}
 	if n.relOp == nil {
+		defer p.w("%s", p.convert(n.isConst, n.literal, n.typ, t))
 		p.simpleExpression(n.simpleExpression, n.simpleExpression.typ, parens)
 		return
 	}
 
-	t = p.promote(n.simpleExpression.typ, n.rhs.typ)
-	p.simpleExpression(n.simpleExpression, t, parens)
+	if parens {
+		p.w("(")
+		defer p.w(")")
+	}
+	t2 := promote(n.simpleExpression.typ, n.rhs.typ)
+	t3 := t2
+	if n.rhs.isConst || n.rhs.literal != nil {
+		t2 = n.simpleExpression.typ
+		t3 = n.rhs.typ
+	}
+	p.simpleExpression(n.simpleExpression, t2, parens)
 	switch n.relOp.ch {
 	case '=':
 		p.w(" == ")
@@ -511,56 +519,11 @@ func (p *project) expression(n *expression, t typ, parens bool) {
 	default:
 		p.err(n.relOp, "internal error: %s", n.relOp.ch)
 	}
-	p.simpleExpression(n.rhs, t, parens)
+	p.simpleExpression(n.rhs, t3, parens)
 }
 
-func (p *project) promote(a, b typ) typ {
-	switch x := a.(type) {
-	case *integer:
-		switch y := b.(type) {
-		case *integer:
-			return a
-		case *subrange:
-			return a
-		case *real:
-			return b
-		default:
-			panic(todo("%T %T", x, y))
-		}
-	case *subrange:
-		switch y := b.(type) {
-		case *integer:
-			return b
-		case *subrange:
-			if a.size() > b.size() {
-				return a
-			}
-
-			return b
-		default:
-			panic(todo("%T %T", x, y))
-		}
-	case *char:
-		switch y := b.(type) {
-		case *char:
-			return a
-		default:
-			panic(todo("%T %T", x, y))
-		}
-	case *real:
-		switch y := b.(type) {
-		case *real:
-			return a
-		default:
-			panic(todo("%T %T", x, y))
-		}
-	default:
-		panic(todo("%T", x))
-	}
-}
-
-func (p *project) convert(from, to typ) string {
-	if from == to {
+func (p *project) convert(isConst bool, l literal, from, to typ) string {
+	if from == to || isConst || l != nil || from.goType() == to.goType() {
 		return ""
 	}
 
@@ -601,6 +564,10 @@ func (p *project) convert(from, to typ) string {
 		}
 	case *array:
 		if to.canBeAssignedFrom(from) {
+			if t, ok := to.(*array); ok && t.isString && l == nil {
+				p.w("string(")
+				return "[:])"
+			}
 			return ""
 		}
 
@@ -608,10 +575,6 @@ func (p *project) convert(from, to typ) string {
 	case *subrange:
 		switch t := to.(type) {
 		case *subrange:
-			if f.lo == t.lo && f.hi == t.hi || f.size() == t.size() {
-				return ""
-			}
-
 			p.w("%s(", t.goType())
 			return ")"
 		case *integer:
@@ -640,7 +603,17 @@ func (p *project) convert(from, to typ) string {
 }
 
 func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {
-	defer p.w("%s", p.convert(n.typ, t))
+	if len(n.list) == 0 {
+		defer p.w("%s", p.convert(n.isConst, n.literal, n.typ, t))
+		if n.sign != nil {
+			p.w("-")
+		}
+		p.term(n.term, n.term.typ)
+		return
+
+	}
+
+	defer p.w("%s", p.convert(n.isConst, nil, n.typ, t))
 	if n.sign != nil {
 		p.w("-")
 	}
@@ -648,12 +621,13 @@ func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {
 		p.w("(")
 		defer p.w(")")
 	}
-	if len(n.list) == 0 {
-		p.term(n.term, n.term.typ)
-		return
+	t2 := t
+	t3 := t
+	if rhs := n.list[0]; len(n.list) == 1 && rhs.isConst || rhs.literal != nil {
+		t2 = n.typ
+		t3 = rhs.typ
 	}
-
-	p.term(n.term, t)
+	p.term(n.term, t2)
 	for _, v := range n.list {
 		switch v.addOp.ch {
 		case '+':
@@ -665,22 +639,29 @@ func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {
 		default:
 			p.err(v.addOp, "internal error: %s", v.addOp.ch)
 		}
-		p.term(v.term, t)
+		p.term(v.term, t3)
 	}
 }
 
 func (p *project) term(n *term, t typ) {
-	defer p.w("%s", p.convert(n.typ, t))
-	if len(n.list) != 0 {
-		p.w("(")
-		defer p.w(")")
-	}
 	if len(n.list) == 0 {
+		defer p.w("%s", p.convert(n.isConst, n.literal, n.typ, t))
 		p.factor(n.factor, n.factor.typ)
 		return
 	}
 
-	p.factor(n.factor, t)
+	defer p.w("%s", p.convert(n.isConst, n.literal, n.typ, t))
+	if len(n.list) != 0 {
+		p.w("(")
+		defer p.w(")")
+	}
+	t2 := t
+	t3 := t
+	if rhs := n.list[0]; len(n.list) == 1 && rhs.isConst || rhs.literal != nil {
+		t2 = n.typ
+		t3 = rhs.typ
+	}
+	p.factor(n.factor, t2)
 	for _, v := range n.list {
 		switch v.mulOp.ch {
 		case '*':
@@ -696,12 +677,12 @@ func (p *project) term(n *term, t typ) {
 		default:
 			p.err(v.mulOp, "internal error: %s", v.mulOp.ch)
 		}
-		p.factor(v.factor, t)
+		p.factor(v.factor, t3)
 	}
 }
 
 func (p *project) factor(n *factor, t typ) {
-	defer p.w("%s", p.convert(n.typ, t))
+	defer p.w("%s", p.convert(n.isConst, n.literal, n.typ, t))
 	if n.unsignedConstant != nil {
 		p.unsignedConstant(n.unsignedConstant)
 		return
@@ -718,7 +699,7 @@ func (p *project) factor(n *factor, t typ) {
 	}
 
 	if n.variable != nil {
-		p.variable(n.variable, false, 0)
+		p.rVariable(n.variable)
 		return
 	}
 
@@ -732,9 +713,14 @@ func (p *project) factor(n *factor, t typ) {
 }
 
 func (p *project) functionDesignator(n *functionDesignator) {
-	p.identifier(n.identifier)
+	switch {
+	case n.replace != "":
+		p.w("%s", n.replace)
+	default:
+		p.identifier(n.identifier)
+	}
 	p.w("(")
-	args := n.identifier.def.(*functionDeclaration).functionHeading.args
+	args := n.args
 	for i, v := range n.list {
 		p.expression(v, args[i], false)
 		p.w(", ")
@@ -760,55 +746,44 @@ func (p *project) unsignedNumber(n *unsignedNumber) {
 	p.w("%s", n.literal.render())
 }
 
-func (p *project) variable(n *variable, lvalue bool, lvl int) bool {
+func (p *project) rVariable(n *variable) {
 	if n.identifier != nil {
 		p.identifier(n.identifier)
-		return false
+		return
 	}
 
 	if n.componentVariable != nil {
-		return p.componentVariable(n.componentVariable, lvalue, lvl)
+		p.rComponentVariable(n.componentVariable)
+		return
 	}
 
-	p.deref(n.deref)
-	return false
+	p.rDeref(n.deref)
 }
 
-func (p *project) deref(n *variable) {
-	p.variable(n, false, 0)
+func (p *project) rDeref(n *variable) {
+	p.rVariable(n)
 	p.w(".%s()", n.typ.(*file).component.goType())
 }
 
-func (p *project) componentVariable(n *componentVariable, lvalue bool, lvl int) bool {
+func (p *project) rComponentVariable(n *componentVariable) {
 	if n.indexedVariable != nil {
 		p.indexedVariable(n.indexedVariable)
-		return false
+		return
 	}
 
-	return p.fieldDesignator(n.fieldDesignator, lvalue, lvl)
+	p.rFieldDesignator(n.fieldDesignator)
 }
 
-func (p *project) fieldDesignator(n *fieldDesignator, lvalue bool, lvl int) bool {
-	p.variable(n.variable, lvalue, lvl+1)
-	switch {
-	case lvalue && n.field.isVariant && lvl == 0:
-		p.w(".%s", p.setterName(n.ident.src))
-		return true
-	case lvalue && n.field.isVariant && lvl != 0:
-		p.w(".%s()", p.lvalueName(n.ident.src))
-		return false
-	case n.field.isVariant:
-		p.w(".%s()", n.ident.src)
-		return false
-	default:
-		p.w(".%s", n.ident.src)
-		return false
+func (p *project) rFieldDesignator(n *fieldDesignator) {
+	p.rVariable(n.variable)
+	p.w(".%s", goIdent(n.ident.src))
+	if n.field.isVariant {
+		p.w("()")
 	}
-	//TODO use getter/setter where/when appropriate
 }
 
 func (p *project) indexedVariable(n *indexedVariable) {
-	p.variable(n.variable, false, 0)
+	p.rVariable(n.variable)
 	dims := n.variable.typ.(*array).dims
 	for i, v := range n.list {
 		p.w("[")
@@ -822,10 +797,10 @@ func (p *project) indexedVariable(n *indexedVariable) {
 
 func (p *project) identifier(n *identifier) {
 	_, isConst := n.def.(*constantDefinition)
-	if !isConst && n.scope.isTLD {
+	if !isConst && n.scope.isTLD && p.task.lib {
 		p.w("%s.", p.task.rcvrName)
 	}
-	p.w("%s", p.ident(n.src))
+	p.w("%s", goIdent(n.src))
 }
 
 func (p *project) procedureAndFunctionDeclarationPart(n *procedureAndFunctionDeclarationPart) {
@@ -844,10 +819,14 @@ func (p *project) functionDeclaration(n *functionDeclaration) {
 		return
 	}
 
-	p.w("\n\nfunc (%s *%s) %s (", p.task.rcvrName, p.task.progTypeName, p.ident(n.functionHeading.ident.src))
+	switch {
+	case p.task.lib:
+		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, goIdent(n.functionHeading.ident.src))
+	default:
+		p.w("\n\nfunc %s(", goIdent(n.functionHeading.ident.src))
+	}
 	p.formalParameters(n.functionHeading.list)
 	p.w(") (ret %s) {", n.functionHeading.typ.goType())
-	//TODO p.block(n.block, false, p.flat(n.block))
 	p.block(n.block, false)
 	p.w("\nreturn ret\n}")
 }
@@ -866,7 +845,7 @@ func (p *project) formalParameters(list []*formalParameterSection) {
 			}
 		}
 		for i, v := range list {
-			p.w("%s", v.src)
+			p.w("%s", goIdent(v.src))
 			if i != len(list)-1 {
 				p.w(", ")
 			}
@@ -876,26 +855,19 @@ func (p *project) formalParameters(list []*formalParameterSection) {
 	}
 }
 
-func (p *project) ident(s string) string {
-	switch s {
-	case "break":
-		return "break1"
-	case "package":
-		return "package1"
-	default:
-		return s
-	}
-}
-
 func (p *project) procedureDeclaration(n *procedureDeclaration) {
 	if n.forward != nil {
 		return
 	}
 
-	p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, p.ident(n.procedureHeading.ident.src))
+	switch {
+	case p.task.lib:
+		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, goIdent(n.procedureHeading.ident.src))
+	default:
+		p.w("\n\nfunc %s(", goIdent(n.procedureHeading.ident.src))
+	}
 	p.formalParameters(n.procedureHeading.list)
 	p.w(") {")
-	//TODO p.block(n.block, false, p.flat(n.block))
 	p.block(n.block, false)
 	p.w("\n}")
 }
@@ -907,24 +879,40 @@ func (p *project) variableDeclarationPart(n *variableDeclarationPart, tld bool) 
 
 	if tld {
 		if tld {
-			p.w("\n\ntype %s struct{", p.task.progTypeName)
-			defer p.w("\n}")
+			switch {
+			case p.task.lib:
+				p.w("\n\ntype %s struct{", p.task.progTypeName)
+				defer p.w("\n}")
+			default:
+				p.w("\n\nvar (")
+				defer p.w("\n)")
+			}
 		}
 		for _, v := range n.list {
 			for _, w := range v.list {
-				p.w("\n%s %s", w.src, v.typ.goType())
+				p.w("\n%s %s", goIdent(w.src), v.typ.goType())
 			}
 		}
 		return
 	}
 
 	for _, v := range n.list {
+		var list []*tok
+		for _, w := range v.list {
+			if _, ok := v.used[w.src]; ok {
+				list = append(list, w)
+			}
+		}
+		if len(list) == 0 {
+			continue
+		}
+
 		p.w("\nvar")
-		for i, w := range v.list {
+		for i, w := range list {
 			if i != 0 {
 				p.w(",")
 			}
-			p.w(" %s", w.src)
+			p.w(" %s", goIdent(w.src))
 		}
 		p.w(" %s;", v.typ.goType())
 	}
@@ -944,7 +932,7 @@ func (p *project) typeDefinitionPart(n *typeDefinitionPart) {
 			continue
 		}
 
-		p.w("\n\t%s %s", v.ident.src, v.typ.render())
+		p.w("\n\t%s %s", goIdent(v.ident.src), v.typ.render())
 	}
 	p.w("\n)\n")
 	for _, v := range recs {
@@ -953,30 +941,24 @@ func (p *project) typeDefinitionPart(n *typeDefinitionPart) {
 }
 
 func (p *project) record(td *typeDefinition) {
-	tn := td.ident.src
+	tn := goIdent(td.ident.src)
 	p.w("\ntype %s %s\n", tn, td.typ.render())
 	for _, v := range td.typ.(*record).variants {
 		fn := v.name
 		ft := v.typ.goType()
 		switch {
 		case v.off == 0:
-			p.w("\n\nfunc (r *%s) %s() %s { return *(*%[3]s)(unsafe.Pointer(&r.variant)) }", tn, fn, ft)
+			p.w("\n\nfunc (r %s) %s() %s { return *(*%[3]s)(unsafe.Pointer(&r.variant)) }", tn, fn, ft)
 			p.w("\n\nfunc (r *%s) %s() *%s { return (*%[3]s)(unsafe.Pointer(&r.variant)) }", tn, p.lvalueName(fn), ft)
-			p.w("\n\nfunc (r *%s) %s(v %s) { *(*%[3]s)(unsafe.Pointer(&r.variant)) = v }", tn, p.setterName(fn), ft)
 		default:
-			p.w("\n\nfunc (r *%s) %s() %s { return *(*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) }", tn, fn, ft, v.off)
+			p.w("\n\nfunc (r %s) %s() %s { return *(*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) }", tn, fn, ft, v.off)
 			p.w("\n\nfunc (r *%s) %s() *%s { return (*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) }", tn, p.lvalueName(fn), ft, v.off)
-			p.w("\n\nfunc (r *%s) %s(v %s) { *(*%[3]s)(unsafe.Pointer(uintptr(unsafe.Pointer(&r.variant))+%d)) = v }", tn, p.setterName(fn), ft, v.off)
 		}
 	}
 }
 
 func (p *project) lvalueName(s string) string {
-	return "lvalue" + strings.ToUpper(s[:1]) + s[1:]
-}
-
-func (p *project) setterName(s string) string {
-	return "set" + strings.ToUpper(s[:1]) + s[1:]
+	return "p" + strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (p *project) constantDefinitionPart(n *constantDefinitionPart) {
@@ -986,7 +968,7 @@ func (p *project) constantDefinitionPart(n *constantDefinitionPart) {
 
 	p.w("\n\nconst (")
 	for _, v := range n.list {
-		p.w("\n\t%s = %s", v.ident.src, v.literal.render())
+		p.w("\n\t%s = %s", goIdent(v.ident.src), v.literal.render())
 	}
 	p.w("\n)")
 }

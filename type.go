@@ -27,10 +27,11 @@ var (
 
 	_ = []adder{aBoolean, aInteger, aReal, aSubrange}
 	_ = []multiplier{aBoolean, aInteger, aReal, aSubrange}
+	_ = []negator{aInteger, aReal, aSubrange}
 	_ = []noter{aBoolean}
+	_ = []ordinal{aInteger, aSubrange, aChar}
 	_ = []packer{aArray, aFile, aRecord}
 	_ = []relator{aChar, aInteger, aReal, aSubrange}
-	_ = []negator{aInteger, aReal, aSubrange}
 
 	aArray    = &array{}
 	aBoolean  = &boolean{}
@@ -436,7 +437,7 @@ type record struct {
 func newRecord(goos, goarch string, fieldList *fieldList, tag string) (*record, error) {
 	r := &record{
 		fields: map[string]*field{},
-		tagS:   tag,
+		tagS:   goIdent(tag),
 	}
 	if tag == "" {
 		return r, fmt.Errorf("anonymous record types not supported")

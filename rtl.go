@@ -33,17 +33,65 @@
 
 package main
 
+import (
+	"fmt"
+	"math"
+)
+
+type memoryWord struct {
+	variant float64
+}
+
 /* CUT HERE */
+
+var _ error = pasError(0)
+
+const (
+	pasEndOfTeX pasError = -iota - 1
+	pasFinalEnd
+)
+
+type pasError int
+
+func (pasError) Error() string { return "" }
+
+func pasJumpOut() { panic(pasEndOfTeX) }
+
+func abs(n float64) float64 { return math.Abs(n) } //TODO check the Pascal definition.
 
 func chr(i int32) byte { return byte(i) }
 
+func iabs(n int32) int32 {
+	if n >= 0 {
+		return n
+	}
+
+	if n == math.MinInt32 {
+		panic("overflow")
+	}
+
+	return -n
+}
+
 func odd(i int32) bool { return i&1 != 0 }
+
+func round(n float64) int32 { return int32(math.Round(n)) } //TODO check the Pascal definition.
+
+type vaWidth int
+
+func read(args ...interface{}) {
+	panic("TODO")
+}
+
+func readLn(args ...interface{}) {
+	panic("TODO")
+}
 
 func write(args ...interface{}) {
 	panic("TODO")
 }
 
-func writeln(args ...interface{}) {
+func writeLn(args ...interface{}) {
 	panic("TODO")
 }
 
@@ -53,4 +101,50 @@ func (f *pasFile) byte() byte {
 	panic("TODO")
 }
 
-type vaWidth int
+func (f *pasFile) memoryWord() memoryWord {
+	panic("TODO")
+}
+
+func (f *pasFile) pMemoryWord() *memoryWord {
+	panic("TODO")
+}
+
+func break1(f *pasFile) {
+	panic("TODO")
+}
+
+func breakIn(f *pasFile, b bool) {
+	panic("TODO")
+}
+
+func close(f *pasFile) {
+	panic("TODO")
+}
+
+func eof(f *pasFile) bool {
+	panic("TODO")
+}
+
+func eoln(f *pasFile) bool {
+	panic("TODO")
+}
+
+func erstat(f *pasFile) int32 {
+	panic("TODO")
+}
+
+func get(f *pasFile) {
+	panic("TODO")
+}
+
+func put(f *pasFile) {
+	panic("TODO")
+}
+
+func reset(f *pasFile, s1, s2 string) {
+	panic(fmt.Errorf("reset(%q, %q) TODO", s1, s2))
+}
+
+func rewrite(f *pasFile, s1, s2 string) {
+	panic(fmt.Errorf("rewrite(%q, %q) TODO", s1, s2))
+}

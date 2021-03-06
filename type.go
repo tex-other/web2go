@@ -586,7 +586,7 @@ func (t *array) size() uintptr  { return t.sz }
 func (t *array) canBeAssignedFrom(rhs typ) bool {
 	switch x := rhs.(type) {
 	case *array:
-		if (t.size() == x.size() || t.isString && t.size() == 0) &&
+		if (t.size() >= x.size() || t.isString && t.size() == 0) &&
 			len(t.dims) == len(x.dims) &&
 			t.elem.size() == x.elem.size() &&
 			t.isPacked == x.isPacked {

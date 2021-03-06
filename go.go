@@ -111,7 +111,6 @@ func (p *project) main(program *program) (err error) {
 package %s
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"math"
@@ -119,6 +118,7 @@ import (
 	"path/filepath"
 	"runtime"
 %s	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -163,8 +163,8 @@ func main() {
 				// ok
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "%%s\n", debug.Stack())
 			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintf(os.Stderr, "%%s\n", debug.Stack())
 			os.Exit(1)
 		}
 	}()
@@ -319,43 +319,18 @@ func (p *project) whileStatement(n *whileStatement) {
 	p.w("\n}")
 }
 
-// func (p *project) forStatement(n *forStatement) {
-// 	loopVarType := n.identifier.typ
-// 	p.w("for ")
-// 	p.identifier(n.identifier)
-// 	p.w(" = ")
-// 	p.expression(n.initial, loopVarType, false)
-// 	p.w("; ")
-// 	p.identifier(n.identifier)
-// 	var s string
-// 	switch n.toOrDownto.ch {
-// 	case TO:
-// 		p.w(" <= ")
-// 		p.expression(n.final, loopVarType, false)
-// 		s = "++"
-// 	default:
-// 		p.w(" >= ")
-// 		p.expression(n.final, loopVarType, false)
-// 		s = "--"
-// 	}
-// 	p.w("; ")
-// 	p.identifier(n.identifier)
-// 	p.w("%s {", s)
-// 	p.statement(n.statement, true)
-// 	p.w("\n}")
-// }
 func (p *project) forStatement(n *forStatement) {
-	p.w("for _i := int(")
+	p.w("for _i := int64(")
 	p.expression(n.initial, n.initial.typ, false)
 	p.w("); _i")
 	var s string
 	switch n.toOrDownto.ch {
 	case TO:
-		p.w(" <= int(")
+		p.w(" <= int64(")
 		p.expression(n.final, n.final.typ, false)
 		s = "++"
 	default:
-		p.w(" >= int(")
+		p.w(" >= int64(")
 		p.expression(n.final, n.final.typ, false)
 		s = "--"
 	}
@@ -459,7 +434,7 @@ func (p *project) assignmentStatement(n *assignmentStatement) {
 		case *array:
 			if lt.canBeAssignedFrom(rt) {
 				if rt.isString {
-					p.w("copy(")
+					p.w("setString(")
 					p.rVariable(n.variable)
 					p.w("[:], ")
 					p.expression(n.expression, n.variable.typ, false)
@@ -806,6 +781,17 @@ func (p *project) unsignedNumber(n *unsignedNumber) {
 
 func (p *project) rVariable(n *variable) {
 	if n.identifier != nil {
+		switch n.identifier.tok.src {
+		case "sys_time", "sys_day", "sys_month",
+			"sys_year":
+			switch x := n.identifier.def.(type) {
+			case *variableDeclaration:
+				if x.isTLD {
+					p.w("pas%s()", capitalize(goIdent(n.identifier.src)))
+					return
+				}
+			}
+		}
 		p.identifier(n.identifier)
 		return
 	}

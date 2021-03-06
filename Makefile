@@ -37,7 +37,7 @@ build_all_targets:
 
 clean:
 	go clean
-	rm -f *~ *.test *.out
+	rm -f *~ *.test *.out tex.p tex.pool tex.tex tex.log
 
 edit:
 	@touch log
@@ -55,6 +55,14 @@ later:
 
 nuke: clean
 	go clean -i
+
+xtex:
+	tangle tex.web changefile.ch
+	weave tex.web
+	go install -v
+	rm -rf ~/tmp/xtex.go
+	web2go -o ~/tmp/xtex.go tex.web changefile.ch
+	go build -v -o ~/bin/xtex ~/tmp/xtex.go
 
 todo:
 	@grep -nr $(grep) ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* * | grep -v $(ngrep) || true

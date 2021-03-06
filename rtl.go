@@ -34,7 +34,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"math"
@@ -42,11 +41,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 	"unsafe"
 )
 
 type memoryWord struct {
-	variant float64
+	variant float32
 }
 
 /* CUT HERE */
@@ -123,9 +123,18 @@ func (err pasError) Error() string { return fmt.Sprintf("%T(%[1]d)", err) }
 
 func pasJumpOut() { panic(pasEndOfTeX) }
 
-func abs(n float32) float32 { return float32(math.Abs(float64(n))) } //TODO check the Pascal definition.
-
-func chr(i int32) byte { return byte(i) }
+func abs(n float32) float32       { return float32(math.Abs(float64(n))) } //TODO check the Pascal definition.
+func chr(i int32) byte            { return byte(i) }
+func odd(i int32) bool            { return i&1 != 0 }
+func pasSysDay() int32            { return int32(time.Now().Day()) }
+func pasSysMonth() int32          { return int32(time.Now().Month()) }
+func pasSysTime() int32           { return int32(time.Now().Hour()*60 + time.Now().Minute()) }
+func pasSysYear() int32           { return int32(time.Now().Year()) }
+func read(args ...interface{})    { args[0].(*pasFile).read(args[1:], false) }
+func readLn(args ...interface{})  { args[0].(*pasFile).read(args[1:], true) }
+func round(n float32) int32       { return int32(math.Round(float64(n))) } //TODO check the Pascal definition.
+func write(args ...interface{})   { args[0].(*pasFile).write(args[1:], false) }
+func writeLn(args ...interface{}) { args[0].(*pasFile).write(args[1:], true) }
 
 func iabs(n int32) int32 {
 	if n >= 0 {
@@ -139,25 +148,41 @@ func iabs(n int32) int32 {
 	return -n
 }
 
-func odd(i int32) bool { return i&1 != 0 }
-
-func round(n float32) int32 { return int32(math.Round(float64(n))) } //TODO check the Pascal definition.
-
-func read(args ...interface{})    { args[0].(*pasFile).read(args[1:], false) }
-func readLn(args ...interface{})  { args[0].(*pasFile).read(args[1:], true) }
-func write(args ...interface{})   { args[0].(*pasFile).write(args[1:], false) }
-func writeLn(args ...interface{}) { args[0].(*pasFile).write(args[1:], true) }
+func setString(dst []byte, src string) {
+	for i := range dst {
+		dst[i] = ' '
+	}
+	copy(dst, src)
+}
 
 type pasFile struct {
 	*ioFile
 }
 
+func (f *pasFile) byte() byte { return f.component[0] }
+
+func (f *pasFile) memoryWord() memoryWord {
+	if g, e := uintptr(f.componentSize), unsafe.Sizeof(memoryWord{}); g != e { //TODO-
+		panic(todo("invalid component: got %v, expected %v (%q)", g, e, f.name))
+	}
+
+	return *(*memoryWord)(unsafe.Pointer(&f.component))
+}
+
+func (f *pasFile) pMemoryWord() *memoryWord {
+	if g, e := uintptr(f.componentSize), unsafe.Sizeof(memoryWord{}); g != e { //TODO-
+		panic(todo("invalid component: got %v, expected %v (%q)", g, e, f.name))
+	}
+
+	return (*memoryWord)(unsafe.Pointer(&f.component))
+}
+
 func break1(f *pasFile)                      { /* nop */ }
 func breakIn(f *pasFile, b bool)             { /* nop */ }
 func close(f *pasFile)                       { f.close() }
-func eof(f *pasFile) bool                    { return f.ioFile.eof() }
+func eof(f *pasFile) bool                    { return f.ioFile.eof }
 func eoln(f *pasFile) bool                   { return f.ioFile.eoln() }
-func erstat(f *pasFile) int32                { return f.erstat() }
+func erstat(f *pasFile) int32                { return f.erstat }
 func get(f *pasFile)                         { f.get() }
 func put(f *pasFile)                         { f.put() }
 func reset1(f *pasFile, name, mode string)   { reset(f, 1, name, mode) }
@@ -165,113 +190,115 @@ func reset4(f *pasFile, name, mode string)   { reset(f, 4, name, mode) }
 func rewrite1(f *pasFile, name, mode string) { rewrite(f, 1, name, mode) }
 func rewrite4(f *pasFile, name, mode string) { rewrite(f, 4, name, mode) }
 
-func reset(f *pasFile, itemSize int, name, mode string) {
+// [0] page 87
+//
+// Reset (F) initiates inspection (reading) of F by placing the file at its
+// beginning. If F is not empty, the value of the first component of F is
+// assigned to F and eof (F) becomes false.
+func reset(f *pasFile, componentSize int, name, mode string) {
 	name = strings.TrimRight(name, " ")
-	panicOnError := !strings.Contains(mode, modeNoIOPanic)
+	if !strings.Contains(mode, modeNoIOPanic) {
+		panic(fmt.Errorf("unsupported file mode: %q (%q)", mode, name))
+	}
+
 	f.close()
 	f.ioFile = nil
-	if isMain && name == stdioDev {
-		f.ioFile = &ioFile{
-			itemSize:     itemSize,
-			name:         name,
-			panicOnError: panicOnError,
-			r0:           os.Stdin,
-			r:            bufio.NewReader(os.Stdin),
+	if name == stdioDev {
+		switch {
+		case isMain:
+			f.ioFile = &ioFile{
+				eof:           false,
+				erstat:        0,
+				componentSize: componentSize,
+				name:          os.Stdin.Name(),
+				in:            os.Stdin, //TODO bufio
+			}
+			return
+		default:
+			panic(todo(""))
 		}
-		return
 	}
 
 	g, err := os.Open(name)
-	if err != nil {
-		if panicOnError {
+	switch {
+	case err != nil:
+		panic(todo("", name, mode, err))
+	default:
+		switch fi, err := g.Stat(); {
+		case err != nil:
+			panic(fmt.Errorf("cannot stat opened file: %v (%q)", err, name))
+		case fi.Size() == 0:
+			panic(todo(""))
+		default:
 			f.ioFile = &ioFile{
-				err:          err,
-				itemSize:     itemSize,
-				name:         name,
-				panicOnError: panicOnError,
+				eof:           false,
+				erstat:        0,
+				componentSize: componentSize,
+				name:          name,
+				in:            g, //TODO bufio
 			}
-			return
+			if _, err := io.ReadFull(f.ioFile.in, f.ioFile.component[:f.ioFile.componentSize]); err != nil {
+				f.ioFile.eof = true
+				f.ioFile.erstat = 1
+				f.ioFile.in.Close()
+			}
 		}
-	}
-
-	f.ioFile = &ioFile{
-		itemSize:     itemSize,
-		name:         name,
-		panicOnError: panicOnError,
-		r0:           g,
-		r:            bufio.NewReader(g),
 	}
 }
 
-func rewrite(f *pasFile, itemSize int, name, mode string) {
+// [0] page 88.
+//
+// Rewrite (F) initiates generation (writing) of the file F. The current value
+// of F is replaced with the empty file. Eof(F) becomes true, and a new file
+// may be written.
+func rewrite(f *pasFile, componentSize int, name, mode string) {
 	name = strings.TrimRight(name, " ")
-	panicOnError := !strings.Contains(mode, modeNoIOPanic)
+	if !strings.Contains(mode, modeNoIOPanic) {
+		panic(fmt.Errorf("unsupported file mode: %q", mode))
+	}
+
 	f.close()
 	f.ioFile = nil
-	if isMain && name == stdioDev {
-		f.ioFile = &ioFile{
-			itemSize:     itemSize,
-			name:         os.Stdout.Name(),
-			panicOnError: panicOnError,
-			w:            os.Stdout,
+	if name == stdioDev {
+		switch {
+		case isMain:
+			f.ioFile = &ioFile{
+				eof:           true,
+				erstat:        0,
+				componentSize: componentSize,
+				name:          os.Stdout.Name(),
+				out:           os.Stdout, //TODO bufio
+			}
+			return
+		default:
+			panic(todo(""))
 		}
-		return
 	}
 
 	g, err := os.Create(name)
 	if err != nil {
-		panic(todo(""))
+		panic(todo("", name, mode))
 	}
 
 	f.ioFile = &ioFile{
-		itemSize:     itemSize,
-		name:         name,
-		panicOnError: panicOnError,
-		w:            g, //TODO bufio?
+		eof:           true,
+		erstat:        0,
+		componentSize: componentSize,
+		name:          name,
+		out:           g, //TODO bufio
 	}
-}
-
-func (f *pasFile) byte() byte {
-	if f.itemSize != 1 {
-		panic(todo("internal error: %v", f.itemSize))
-	}
-
-	if !f.componentMode {
-		f.get()
-	}
-
-	return f.buf[0]
-}
-
-func (f *pasFile) memoryWord() memoryWord {
-	if f.itemSize != 8 {
-		panic(todo("internal error: %v", f.itemSize))
-	}
-
-	return *(*memoryWord)(unsafe.Pointer(&f.buf[0]))
-}
-
-func (f *pasFile) pMemoryWord() *memoryWord {
-	if f.itemSize != 8 {
-		panic(todo("internal error: %v", f.itemSize))
-	}
-
-	return (*memoryWord)(unsafe.Pointer(&f.buf[0]))
 }
 
 type ioFile struct {
-	r0 *os.File
-	r  *bufio.Reader
-	w  io.Writer
+	component     [unsafe.Sizeof(memoryWord{})]byte
+	erstat        int32
+	in            io.ReadCloser
+	componentSize int
+	name          string
+	out           io.WriteCloser
 
-	b1       [1]byte
-	buf      [4]byte
-	err      error
-	itemSize int
-	name     string
-
-	componentMode bool
-	panicOnError  bool
+	eof bool
+	eol bool
 }
 
 func (f *ioFile) close() {
@@ -279,27 +306,36 @@ func (f *ioFile) close() {
 		return
 	}
 
-	if x, ok := f.w.(io.Closer); ok {
-		if f.err = x.Close(); f.err != nil && f.panicOnError {
-			panic(fmt.Errorf("I/O error: %v", f.err))
+	if f.in != nil {
+		if err := f.in.Close; err != nil {
+			f.erstat = 1
 		}
-
-		f.w = nil
-		return
+		f.eof = true
+		f.in = nil
 	}
 
-	if f.r != nil {
-		if f.err = f.r0.Close(); f.err != nil && f.panicOnError {
-			panic(fmt.Errorf("I/O error: %v", f.err))
+	if f.out != nil {
+		if err := f.out.Close; err != nil {
+			f.erstat = 1
 		}
-
-		f.r0 = nil
-		f.r = nil
-		return
+		f.eof = false
+		f.in = nil
 	}
 }
 
+// [0] page 88
+//
+// Read (F, X) (for X, a variable) is equivalent to
+//
+// 	begin
+// 		X := F^; Get(F)
+// 	end
+//
+// Read (F, V1, ... , Vn) is equivalent to the statement
+//
+//	begin Read(F,V1); ... ;Read(F,Vn) end
 func (f *ioFile) read(args []interface{}, nl bool) {
+	f.eol = false
 	for len(args) != 0 {
 		arg := args[0]
 		args = args[1:]
@@ -309,62 +345,38 @@ func (f *ioFile) read(args []interface{}, nl bool) {
 
 		switch x := arg.(type) {
 		case *byte:
-			var n int
-			if n, f.err = f.r.Read(f.buf[:1]); n != 1 {
-				panic(todo("%q %v %v", f.name, n, f.err))
-			}
-
-			*x = f.buf[0]
+			*x = f.component[0]
 		default:
-			panic(todo("%T", x))
+			panic(fmt.Errorf("unsupported read variable type: %T (%q)", x, f.name))
 		}
+		f.get()
 	}
 	if !nl {
 		return
 	}
 
-	for {
-		var n int
-		n, f.err = f.r.Read(f.b1[:])
-		if n == 0 || f.b1[0] == '\n' {
-			return
-		}
+	// [0] page 92
+	//
+	// ReadLn(F) skips to the beginning of the next line of the textfile F (F^
+	// becomes the first character of the next line).
+	for !f.eof && f.component[0] != '\n' {
+		f.get()
+	}
+	if !f.eof {
+		f.get()
 	}
 }
 
-func (f *ioFile) eof() bool {
-	if f.err == io.EOF {
-		return true
-	}
-
-	var n int
-	if n, f.err = f.r.Read(f.b1[:]); n == 0 || f.err == io.EOF {
-		return true
-	}
-
-	f.r.UnreadByte()
-	return false
-}
-
-func (f *ioFile) eoln() bool {
-	if f.err == io.EOF {
-		return true
-	}
-
-	if f.componentMode {
-		return f.buf[0] == '\n'
-	}
-
-	var n int
-	if n, f.err = f.r.Read(f.b1[:]); n == 0 || f.err == io.EOF {
-		f.err = io.EOF
-		return true
-	}
-
-	f.r.UnreadByte()
-	return f.b1[0] == '\n'
-}
-
+// [0] page 88
+//
+// Write(F, E) (for E, an expresion) is equivalent to
+//
+// 	begin
+// 		F^ := E; Put(F)
+// 	end
+// Write (F, E1, ... , En) is equivalent to the statement
+//
+//	begin Write(F,E1); ... ; Write(F,En) end
 func (f *ioFile) write(args []interface{}, nl bool) {
 	for len(args) != 0 {
 		arg := args[0]
@@ -373,48 +385,82 @@ func (f *ioFile) write(args []interface{}, nl bool) {
 			panic(todo("", w))
 		}
 
+		var err error
 		switch x := arg.(type) {
 		case string:
-			if _, f.err = f.w.Write([]byte(x)); f.err != nil && f.panicOnError {
-				panic(fmt.Errorf("I/O error: %v", f.err))
-			}
+			_, err = f.out.Write([]byte(x))
 		case byte:
-			f.buf[0] = x
-			if _, f.err = f.w.Write(f.buf[:1]); f.err != nil && f.panicOnError {
-				panic(fmt.Errorf("I/O error: %v", f.err))
-			}
+			f.component[0] = x
+			f.put()
 		default:
-			panic(todo("%T", x))
+			panic(fmt.Errorf("unsupported write variable type: %T (%q)", x, f.name))
+		}
+		if err != nil {
+			panic(fmt.Errorf("write I/O error: %v (%q)", err, f.name))
 		}
 	}
+	// [0] page 92
+	//
+	// Writeln (F) terminates the current line of the textfile F.
 	if nl {
-		if _, f.err = f.w.Write([]byte("\n")); f.err != nil && f.panicOnError {
-			panic(fmt.Errorf("I/O error: %v", f.err))
-		}
+		f.write([]interface{}{"\n"}, false)
 	}
 }
 
+// [0] page 88
+//
+// Get(F) advances the file to the next component and assigns the value of this
+// component to the buffer variable F^. If no next component exists, then
+// eof(F) becomes true, and F^ becomes undefined. The effect of Get (F) is an
+// error if eof(F) is true prior to its execution or if F is being generated.
 func (f *ioFile) get() {
-	f.componentMode = true
-	var n int
-	if n, f.err = f.r.Read(f.buf[:f.itemSize]); n != f.itemSize && f.panicOnError {
-		panic(fmt.Errorf("I/O error: %v", f.err))
+	if f.eof {
+		panic(fmt.Errorf("get called at eof: %s", f.name))
+	}
+
+	f.eol = false
+	if _, err := io.ReadFull(f.in, f.component[:f.componentSize]); err != nil {
+		f.eof = true
+		f.erstat = 1
+		f.in.Close()
 	}
 }
 
+// [0] page 88
+//
+// Put(F) appends the value of the buffer variable F^ to the file F. The effect
+// is an error unless prior to execution the predicate eof(F) is true. eof(F)
+// remains true, and F^ becomes undefined. Put(F) is an error if F is being
+// inspected.
 func (f *ioFile) put() {
-	var n int
-	if n, f.err = f.w.Write(f.buf[:f.itemSize]); n != f.itemSize && f.panicOnError {
-		panic(fmt.Errorf("I/O error: %v", f.err))
+	if !f.eof {
+		panic(fmt.Errorf("put called not at eof: %s", f.name))
+	}
+
+	if _, err := f.out.Write(f.component[:f.componentSize]); err != nil {
+		panic(fmt.Errorf("put I/O error: %v (%q)", err, f.name))
 	}
 }
 
-func (f *ioFile) erstat() int32 {
-	if f.err == nil {
-		return 0
+// [0] page 92
+//
+// Eoln(F)
+//
+// a Boolean function indicating whether the end of the current line in the
+// textfile F has been reached. (If true, F^ corresponds to the position of a
+// line separator, but F^ is a blank.)
+func (f *ioFile) eoln() bool {
+	if f.eol {
+		return true
 	}
 
-	return 1
+	if f.component[0] != '\n' {
+		return false
+	}
+
+	f.component[0] = ' '
+	f.eol = true
+	return true
 }
 
 type vaWidth int

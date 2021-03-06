@@ -3,6 +3,7 @@
 // license that can be found in the LICENSE file.
 
 //TODO trip test suite
+//TODO Enlarge constants
 
 //go:generate assets -d . -re changefile.ch|rtl.go
 //go:generate stringer -output stringer.go -linecomment -type=ch

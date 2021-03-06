@@ -450,7 +450,7 @@ func (f *ioFile) put() {
 // textfile F has been reached. (If true, F^ corresponds to the position of a
 // line separator, but F^ is a blank.)
 func (f *ioFile) eoln() bool {
-	if f.eol {
+	if f.eol || f.eof {
 		return true
 	}
 

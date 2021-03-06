@@ -652,12 +652,12 @@ func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {
 	}
 
 	defer p.w("%s", p.convert(n.isConst, nil, n.typ, t))
-	if n.sign != nil {
-		p.w("-")
-	}
 	if parens {
 		p.w("(")
 		defer p.w(")")
+	}
+	if n.sign != nil {
+		p.w("-")
 	}
 	t2 := t
 	t3 := t

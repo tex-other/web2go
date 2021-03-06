@@ -214,11 +214,11 @@ func (t *real) canBeAssignedFrom(rhs typ) bool {
 func (t *real) String() string                   { return "real" }
 func (t *real) add(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 func (t *real) and(rhs multiplier) (typ, error)  { return ndefOp(t) }
-func (t *real) cType() string                    { return "double" }
+func (t *real) cType() string                    { return "float" }
 func (t *real) div(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *real) eq(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) ge(rhs relator) (typ, error)      { return aBoolean, nil }
-func (t *real) goType() string                   { return "float64" }
+func (t *real) goType() string                   { return "float32" }
 func (t *real) gt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) idiv(rhs multiplier) (typ, error) { return ndefOp(t) }
 func (t *real) in(rhs relator) (typ, error)      { return ndefOp(t) }
@@ -230,7 +230,7 @@ func (t *real) ne(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) neg() (typ, error)                { return t, nil }
 func (t *real) or(rhs adder) (typ, error)        { return ndefOp(t) }
 func (t *real) render() string                   { return t.goType() }
-func (t *real) size() uintptr                    { return unsafe.Sizeof(float64(0)) }
+func (t *real) size() uintptr                    { return unsafe.Sizeof(float32(0)) }
 func (t *real) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 
 func (t *real) binOp(rhs typ) (typ, error) {
@@ -397,7 +397,7 @@ type file struct {
 func newFile(component typ) *file { return &file{component: component} }
 
 func (t *file) String() string { return fmt.Sprintf("file of %v", t.component) }
-func (t *file) cType() string  { return "void*[2]" }
+func (t *file) cType() string  { return "void*" }
 func (t *file) goType() string { return "*pasFile" }
 func (t *file) render() string { return t.goType() }
 func (t *file) setPacked()     { t.packed = true }
@@ -568,7 +568,7 @@ func (t *array) goType() string {
 	for _, v := range t.dims {
 		a = append(a, fmt.Sprintf("[%d]", v.(ordinal).cardinality()))
 	}
-	return fmt.Sprintf("%s%s", strings.Join(a, ""), t.elem.goType())
+	return fmt.Sprintf("%s%s", strings.Join(a, ""), strings.TrimLeft(t.elem.goType(), "*"))
 }
 
 func (t *array) String() string {

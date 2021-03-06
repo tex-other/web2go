@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	universe = scope{
+	universe = &scope{
 		isUniverse: true,
 		m: map[string]node{
 			"abs": &functionDeclaration{
@@ -76,9 +76,11 @@ var (
 			"real": &real{},
 			"reset": &procedureDeclaration{
 				procedureHeading: &procedureHeading{args: []typ{aFile, aString, aString}},
+				isResetOrRewrite: true,
 			},
 			"rewrite": &procedureDeclaration{
 				procedureHeading: &procedureHeading{args: []typ{aFile, aString, aString}},
+				isResetOrRewrite: true,
 			},
 			"round": &functionDeclaration{
 				functionHeading: &functionHeading{args: []typ{aReal}},
@@ -120,7 +122,7 @@ type parser struct {
 	task     *task
 	tok      *tok // current token if not nil and ungetBuf is nil
 	ungetBuf *tok // current token if not nil
-	universe scope
+	universe *scope
 
 	debug          bool
 	overflowCheck  bool
@@ -340,7 +342,7 @@ func (s *scope) find(nm string) (*scope, node) {
 
 // Program = ProgramHeading ";" Block "." .
 type program struct {
-	scope
+	*scope
 	*programHeading
 	semi *tok
 	*block
@@ -349,11 +351,11 @@ type program struct {
 
 func (p *parser) program() *program {
 	var r program
-	r.scope.parent = &p.universe
+	r.scope = &scope{parent: p.universe}
 	r.scope.isTLD = true
 	r.programHeading = p.programHeading()
 	r.semi = p.mustShift(';')
-	r.block = p.block(&r.scope)
+	r.block = p.block(r.scope)
 	r.dot = p.mustShift('.')
 	return &r
 }
@@ -696,7 +698,7 @@ type forStatement struct {
 func (p *parser) forStatement(s *scope) *forStatement {
 	return &forStatement{
 		p.mustShift(FOR),
-		p.identifier(s, true),
+		p.identifier(s, false),
 		p.mustShift(ASSIGN),
 		p.expression(s),
 		p.toOrDownto(),
@@ -854,10 +856,8 @@ func (p *parser) arg(s *scope, args []typ, ix int, isRead, isWrite bool) *arg {
 	c0 := p.c()
 	r := &arg{expression: p.expression(s)}
 	switch {
-	case isRead:
-		//TODO panic(todo(""))
-	case isWrite:
-		//TODO panic(todo(""))
+	case isRead, isWrite:
+		// nop
 	default:
 		p.checkArg(c0, r.expression.typ, args, ix)
 	}
@@ -915,6 +915,7 @@ type expression struct {
 	rhs   *simpleExpression
 	typ
 	literal
+	*identifier
 
 	isConst bool
 }
@@ -925,6 +926,7 @@ func (p *parser) expression(s *scope) *expression {
 	r.typ = r.simpleExpression.typ
 	r.literal = r.simpleExpression.literal
 	r.isConst = r.simpleExpression.isConst
+	r.identifier = r.simpleExpression.identifier
 	switch p.c().ch {
 	case '=', NE, '<', LE, '>', GE, IN:
 		r.relOp = p.shift()
@@ -932,6 +934,7 @@ func (p *parser) expression(s *scope) *expression {
 		r.typ = p.relOp(r.relOp, r.typ, r.rhs.typ, r.relOp.ch)
 		r.literal = nil
 		r.isConst = true
+		r.identifier = nil
 	}
 	if r.typ == nil {
 		p.err(c0, "expression type not resolved")
@@ -993,6 +996,7 @@ type term struct {
 	list []termListItem
 	typ
 	literal
+	*identifier
 
 	isConst bool
 }
@@ -1003,6 +1007,7 @@ func (p *parser) term(s *scope) *term {
 	r.typ = r.factor.typ
 	r.literal = r.factor.literal
 	r.isConst = r.factor.unsignedConstant != nil
+	r.identifier = r.factor.identifier
 	for {
 		switch p.c().ch {
 		case '*', '/', DIV, MOD, AND:
@@ -1014,6 +1019,7 @@ func (p *parser) term(s *scope) *term {
 			r.list = append(r.list, item)
 			r.literal = nil
 			r.isConst = false
+			r.identifier = nil
 		default:
 			return r
 		}
@@ -1064,13 +1070,13 @@ func (p *parser) mulOp(n node, lhs, rhs typ, op ch) (r typ) {
 //	"not" factor | "(" Expression ")" .
 type factor struct {
 	*unsignedConstant
-	*identifier
 	*functionDesignator
 	*variable
 	*expression
 	not *factor
 	typ
 	literal
+	*identifier
 
 	isConst bool
 }
@@ -1097,6 +1103,7 @@ func (p *parser) factor(s *scope) *factor {
 			p.unget(id)
 			r := &factor{variable: p.variable(s, true)}
 			r.typ = r.variable.typ
+			r.identifier = r.variable.identifier
 			return r
 		case *constantDefinition:
 			p.unget(id)
@@ -1108,11 +1115,13 @@ func (p *parser) factor(s *scope) *factor {
 			p.unget(id)
 			r := &factor{variable: p.variable(s, false)}
 			r.typ = r.variable.typ
+			r.identifier = r.variable.identifier
 			return r
 		case *variableParameterSpecification:
 			p.unget(id)
 			r := &factor{variable: p.variable(s, false)}
 			r.typ = r.variable.typ
+			r.identifier = r.variable.identifier
 			return r
 		case *functionDeclaration:
 			p.unget(id)
@@ -1311,6 +1320,7 @@ type simpleExpression struct {
 	list []simpleExpressionListItem
 	typ
 	literal
+	*identifier
 
 	isConst bool
 }
@@ -1325,6 +1335,7 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 	r.literal = r.term.literal
 	r.typ = r.term.typ
 	r.isConst = r.term.isConst
+	r.identifier = r.term.identifier
 	if sign != nil && sign.src == "-" {
 		r.typ = p.negType(c0, r.typ)
 	}
@@ -1339,6 +1350,7 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 			r.list = append(r.list, item)
 			r.literal = nil
 			r.isConst = false
+			r.term.identifier = nil
 		default:
 			return r
 		}
@@ -1585,7 +1597,7 @@ func (p *parser) procedureAndFunctionDeclarationPart(s *scope) (r []*procedureAn
 //	FunctionHeading ";" Directive |
 //	FunctionIdentification ";" Block .
 type functionDeclaration struct {
-	scope
+	*scope
 	*functionHeading
 	semi *tok
 	*block
@@ -1600,8 +1612,8 @@ func (n *functionDeclaration) isCompatible(m *functionDeclaration) bool {
 }
 
 func (p *parser) functionDeclaration(s *scope) *functionDeclaration {
-	r := &functionDeclaration{scope: scope{parent: s}}
-	r.functionHeading = p.functionHeading(&r.scope)
+	r := &functionDeclaration{scope: &scope{parent: s}}
+	r.functionHeading = p.functionHeading(r.scope)
 	r.typ = r.functionHeading.typ
 	s.declare(p, r, r.functionHeading.ident.src)
 	r.semi = p.mustShift(';')
@@ -1610,7 +1622,7 @@ func (p *parser) functionDeclaration(s *scope) *functionDeclaration {
 		return r
 	}
 
-	r.block = p.block(&r.scope)
+	r.block = p.block(r.scope)
 	return r
 }
 
@@ -1643,14 +1655,15 @@ func (p *parser) functionHeading(s *scope) *functionHeading {
 //	ProcedureHeading ";" Directive |
 //	ProcedureIdentification ";" Block.
 type procedureDeclaration struct {
-	scope
+	*scope
 	*procedureHeading
 	semi *tok
 	*block
 	forward *tok
 
-	isRead  bool
-	isWrite bool
+	isRead           bool
+	isWrite          bool
+	isResetOrRewrite bool
 }
 
 func (n *procedureDeclaration) Position() token.Position {
@@ -1662,8 +1675,8 @@ func (n *procedureDeclaration) isCompatible(m *procedureDeclaration) bool {
 }
 
 func (p *parser) procedureDeclaration(s *scope) *procedureDeclaration {
-	r := &procedureDeclaration{scope: scope{parent: s}}
-	r.procedureHeading = p.procedureHeading(&r.scope)
+	r := &procedureDeclaration{scope: &scope{parent: s}}
+	r.procedureHeading = p.procedureHeading(r.scope)
 	r.semi = p.mustShift(';')
 	s.declare(p, r, r.procedureHeading.ident.src)
 	if t := p.c(); t.ch == IDENTIFIER && strings.ToLower(t.src) == "forward" {
@@ -1671,7 +1684,7 @@ func (p *parser) procedureDeclaration(s *scope) *procedureDeclaration {
 		return r
 	}
 
-	r.block = p.block(&r.scope)
+	r.block = p.block(r.scope)
 	return r
 }
 

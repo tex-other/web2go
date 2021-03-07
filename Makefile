@@ -62,7 +62,7 @@ xtex:
 	cp tex.p ~/tmp/tex.p
 	weave tex.web
 	go install -v
-	rm -rf ~/tmp/xtex.go
+	rm -f ~/tmp/xtex.go
 	web2go -o ~/tmp/xtex.go tex.web
 	go build -v -o ~/bin/xtex ~/tmp/xtex.go
 

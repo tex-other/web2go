@@ -68,6 +68,7 @@ const (
 	stdioDev      = "TTY:"
 	texArea       = "TeXinputs:"
 	texFontArea   = "TeXfonts:"
+	texPool       = "TeXformats:TEX.POOL"
 )
 
 func origin(skip int) string {
@@ -232,7 +233,7 @@ ok:
 	switch {
 	case err != nil:
 		switch {
-		case name == "TeXformats:TEX.POOL":
+		case name == texPool:
 			f.ioFile = &ioFile{
 				eof:           false,
 				erstat:        0,
@@ -280,6 +281,7 @@ ok:
 			in:            g, //TODO bufio
 		}
 	}
+
 	if _, err := io.ReadFull(f.ioFile.in, f.ioFile.component[:f.ioFile.componentSize]); err != nil {
 		f.ioFile.eof = true
 		f.ioFile.erstat = 1

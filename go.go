@@ -545,7 +545,7 @@ func (p *project) expression(n *expression, t typ, parens bool) {
 		p.w("(")
 		defer p.w(")")
 	}
-	t2 := promote(n.simpleExpression.typ, n.rhs.typ)
+	t2 := p.promote(n.relOp, n.simpleExpression.typ, n.rhs.typ)
 	t3 := t2
 	if n.rhs.isConst || n.rhs.literal != nil {
 		t2 = n.simpleExpression.typ
@@ -571,6 +571,34 @@ func (p *project) expression(n *expression, t typ, parens bool) {
 		p.err(n.relOp, "internal error: %s", n.relOp.ch)
 	}
 	p.simpleExpression(n.rhs, t3, parens)
+}
+
+func (p *project) promote(n node, a, b typ) typ {
+	if a == b || a.goType() == b.goType() {
+		return a
+	}
+
+	switch a.(type) {
+	case *integer:
+		switch b.(type) {
+		case *subrange:
+			return a
+		}
+	case *subrange:
+		switch b.(type) {
+		case *integer:
+			return b
+		case *subrange:
+			if a.size() > b.size() {
+				return a
+			}
+
+			return b
+		}
+	}
+
+	p.err(n, "unsupported promotion: %v op %v", a, b)
+	return a
 }
 
 func (p *project) convert(isConst bool, l literal, from, to typ) string {

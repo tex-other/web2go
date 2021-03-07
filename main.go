@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//TODO trip test suite
 //TODO Enlarge constants
 
 //go:generate tangle tex.web
@@ -30,8 +29,7 @@
 //
 // Dependencies
 //
-// Some external programs might be used, depending on what extension the
-// input-file has.
+// An external programs must be available in $PATH.
 //
 //	TANGLE(1)
 //
@@ -41,8 +39,8 @@
 //	SYNOPSIS
 //	       tangle [options] webfile[.web] [changefile[.ch]]
 //
-// Used to convert a .web, like tex.web to a .p (Pascal) file. Tangle binary is
-// part of the Debian package 'texlive'.
+// Tangle is used to convert a .web, like tex.web to a .p (Pascal) file. The
+// binary is part of the Debian package 'texlive', for example.
 //
 // Invocation
 //

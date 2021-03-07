@@ -52,7 +52,8 @@ type memoryWord struct {
 /* CUT HERE */
 
 var (
-	_ error = pasError(0)
+	_ error         = pasError(0)
+	_ io.ReadCloser = readCloser{}
 
 	isMain bool
 )
@@ -190,6 +191,12 @@ func reset4(f *pasFile, name, mode string)   { reset(f, 4, name, mode) }
 func rewrite1(f *pasFile, name, mode string) { rewrite(f, 1, name, mode) }
 func rewrite4(f *pasFile, name, mode string) { rewrite(f, 4, name, mode) }
 
+type readCloser struct {
+	io.Reader
+}
+
+func (r readCloser) Close() error { return nil }
+
 // [0] page 87
 //
 // Reset (F) initiates inspection (reading) of F by placing the file at its
@@ -219,21 +226,33 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 	}
 
 	g, err := os.Open(name)
-	if err != nil {
+	switch {
+	case err != nil:
+		switch {
+		case name == "TeXformats:TEX.POOL":
+			f.ioFile = &ioFile{
+				eof:           false,
+				erstat:        0,
+				componentSize: componentSize,
+				name:          name,
+				in:            readCloser{strings.NewReader(assets["/tex.pool"])},
+			}
+		default:
+			f.ioFile = &ioFile{
+				erstat:        1,
+				componentSize: componentSize,
+				name:          name,
+			}
+			return
+		}
+	default:
 		f.ioFile = &ioFile{
-			erstat:        1,
+			eof:           false,
+			erstat:        0,
 			componentSize: componentSize,
 			name:          name,
+			in:            g, //TODO bufio
 		}
-		return
-	}
-
-	f.ioFile = &ioFile{
-		eof:           false,
-		erstat:        0,
-		componentSize: componentSize,
-		name:          name,
-		in:            g, //TODO bufio
 	}
 	if _, err := io.ReadFull(f.ioFile.in, f.ioFile.component[:f.ioFile.componentSize]); err != nil {
 		f.ioFile.eof = true

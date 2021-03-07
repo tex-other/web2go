@@ -117,6 +117,16 @@ import (
 
 `, p.task.pkgName, s)
 	p.block(program.block, true)
+	p.w("\n\nvar assets = map[string]string{")
+	for k, v := range assets {
+		switch k {
+		case "/rtl.go":
+			// skip
+		default:
+			p.w("\n%q: %q,", k, v)
+		}
+	}
+	p.w("\n}")
 	rtl := assets["/rtl.go"]
 	const tag = "/* CUT HERE */"
 	rtl = rtl[strings.Index(rtl, tag)+len(tag):]

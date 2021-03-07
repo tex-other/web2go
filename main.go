@@ -5,7 +5,8 @@
 //TODO trip test suite
 //TODO Enlarge constants
 
-//go:generate cp -v rtl.go assets/
+//go:generate tangle tex.web
+//go:generate cp -v tex.pool rtl.go assets/
 //go:generate assets
 //go:generate stringer -output stringer.go -linecomment -type=ch
 //go:generate gofmt -l -s -w .

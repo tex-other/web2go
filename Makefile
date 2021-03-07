@@ -37,7 +37,7 @@ build_all_targets:
 
 clean:
 	go clean
-	rm -f *~ *.test *.out tex.p tex.pool tex.tex tex.log
+	rm -f *~ *.test *.out tex.p tex.pas tex.pool tex.tex *.log
 
 edit:
 	@touch log
@@ -53,14 +53,14 @@ later:
 	@grep -n $(grep) LATER * || true
 	@grep -n $(grep) MAYBE * || true
 
-nuke: clean
+nuke: clean;
 	go clean -i
 
 xtex:
-	tangle tex.web
+	go generate
+	ptop tex.p tex.pas
 	cp tex.p ~/tmp/tex.p
 	weave tex.web
-	ptop tex.p tex.pas
 	go install -v
 	rm -rf ~/tmp/xtex.go
 	web2go -o ~/tmp/xtex.go tex.web

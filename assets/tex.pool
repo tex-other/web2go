@@ -40,7 +40,7 @@
 59in fact, I'm barely conscious. Please fix it and try again.
 12Interruption
 09You rang?
-60Try to insert some instructions for me (e.g.,`I\showlists'),
+58Try to insert an instruction for me (e.g., `I\showlists'),
 43unless you just want to quit by typing `X'.
 16main memory size
 24AVAIL list clobbered at 
@@ -117,7 +117,7 @@
 05 line
 12spacefactor 
 19, current language 
-28this will be denominator of:
+31this will begin denominator of:
 08lineskip
 12baselineskip
 07parskip
@@ -487,7 +487,8 @@
 60Where was the left brace? You said something like `\def\a}',
 43which I'm going to interpret as `\def\a{}'.
 32You already have nine parameters
-45I'm going to ignore the # sign you just used.
+45I'm going to ignore the # sign you just used,
+38as well as the token that followed it.
 41Parameters must be numbered consecutively
 57I've inserted the digit you should have used after the #.
 36Type `1' to delete what you did use.
@@ -525,8 +526,8 @@
 23Missing = inserted for 
 48I was expecting to see `<', `=', or `>'. Didn't.
 06{case 
-04tex/
-04tfm/
+10TeXinputs:
+09TeXfonts:
 04.fmt
 15input file name
 19I can't find file `
@@ -1042,4 +1043,4 @@
 59On this page there's a \write with fewer real {'s than }'s.
 04ext4
 16output file name
-*117275187
+*504454778

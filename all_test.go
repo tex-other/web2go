@@ -312,5 +312,33 @@ func TestTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 3. Run the INITEX prepared in step 2. In response to the first ‘**’ prompt,
+	// type carriage return (thus getting another ‘**’). Then type ‘\input trip’.
+	// You should get an output that matches the file TRIPIN.LOG (Appendix D).
+	// Don’t be alarmed by the error messages that you see, unless they are
+	// different from those in Appendix D.
+	cmd := exec.Command("go", "run", filepath.Join(tempDir, "tex.go"))
+	stdin, err := cmd.StdinPipe() // writer
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, err := cmd.StdoutPipe() // reader
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stderr, err := cmd.StderrPipe() // reader
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = stdin
+	_ = stdout
+	_ = stderr
 	_ = dvitype
 }

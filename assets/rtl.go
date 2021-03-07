@@ -64,8 +64,10 @@ const (
 )
 
 const (
-	stdioDev      = "TTY:"
 	modeNoIOPanic = "/O"
+	stdioDev      = "TTY:"
+	texArea       = "TeXinputs:"
+	texFontArea   = "TeXfonts:"
 )
 
 func origin(skip int) string {
@@ -226,6 +228,7 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 	}
 
 	g, err := os.Open(name)
+ok:
 	switch {
 	case err != nil:
 		switch {
@@ -237,14 +240,27 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 				name:          name,
 				in:            readCloser{strings.NewReader(assets["/tex.pool"])},
 			}
-		default:
-			f.ioFile = &ioFile{
-				erstat:        1,
-				componentSize: componentSize,
-				name:          name,
+			break ok
+		case strings.HasPrefix(name, texArea):
+			if s, ok := assets["/tex/"+name[len(texArea):]]; ok {
+				f.ioFile = &ioFile{
+					eof:           false,
+					erstat:        0,
+					componentSize: componentSize,
+					name:          name,
+					in:            readCloser{strings.NewReader(s)},
+				}
+				break ok
 			}
-			return
 		}
+
+		// trc("%q", name)
+		f.ioFile = &ioFile{
+			erstat:        1,
+			componentSize: componentSize,
+			name:          name,
+		}
+		return
 	default:
 		f.ioFile = &ioFile{
 			eof:           false,

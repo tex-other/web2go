@@ -78,16 +78,9 @@ func testMain(m *testing.M) int {
 }
 
 func TestScanner(t *testing.T) {
-	const changeFile = "changefile.ch"
 	task := newTask(os.Args)
 	task.tempDir = tempDir
 	task.in = "tex.web"
-	pth := filepath.Join(tempDir, changeFile)
-	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
-		t.Fatal(err)
-	}
-
-	task.changeFile = pth
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
 		t.Fatalf("%s\n%v", b, err)
@@ -118,16 +111,9 @@ func TestScanner(t *testing.T) {
 }
 
 func TestParser(t *testing.T) {
-	const changeFile = "changefile.ch"
 	task := newTask(os.Args)
 	task.tempDir = tempDir
 	task.in = "tex.web"
-	pth := filepath.Join(tempDir, changeFile)
-	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
-		t.Fatal(err)
-	}
-
-	task.changeFile = pth
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
 		t.Fatalf("%s\n%v", b, err)
@@ -149,17 +135,10 @@ func TestParser(t *testing.T) {
 }
 
 func TestGenerator(t *testing.T) {
-	const changeFile = "changefile.ch"
 	task := newTask(os.Args)
 	task.tempDir = tempDir
 	task.in = "tex.web"
 	task.o = filepath.Join(tempDir, "tex.go")
-	pth := filepath.Join(tempDir, changeFile)
-	if err := ioutil.WriteFile(pth, []byte(assets["/"+changeFile]), 0660); err != nil {
-		t.Fatal(err)
-	}
-
-	task.changeFile = pth
 	task.p = filepath.Join(task.tempDir, "tex.p")
 	if b, err := task.web2p(); err != nil {
 		t.Fatalf("%s\n%v", b, err)

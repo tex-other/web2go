@@ -57,13 +57,13 @@ nuke: clean
 	go clean -i
 
 xtex:
-	tangle tex.web assets/changefile.ch
+	tangle tex.web
 	cp tex.p ~/tmp/tex.p
 	weave tex.web
 	ptop tex.p tex.pas
 	go install -v
 	rm -rf ~/tmp/xtex.go
-	web2go -o ~/tmp/xtex.go tex.web assets/changefile.ch
+	web2go -o ~/tmp/xtex.go tex.web
 	go build -v -o ~/bin/xtex ~/tmp/xtex.go
 
 todo:
@@ -77,7 +77,7 @@ stringer.go: scanner.go
 	stringer -output stringer.go -linecomment -type=ch
 	gofmt -l -s -w .
 
-assets.go: assets/changefile.ch rtl.go
+assets.go: rtl.go
 	cp -v rtl.go assets/
 	assets
 	gofmt -l -s -w .

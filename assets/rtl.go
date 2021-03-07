@@ -220,6 +220,7 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 
 	g, err := os.Open(name)
 	if err != nil {
+		trc("%q", name)
 		f.ioFile = &ioFile{
 			erstat:        1,
 			componentSize: componentSize,

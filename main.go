@@ -271,11 +271,8 @@ func (t *task) web2p() ([]byte, error) {
 	}
 
 	args := []string{"-underline", t.in}
-	switch {
-	case t.changeFile != "":
+	if t.changeFile != "" {
 		args = append(args, t.changeFile)
-	default:
-		panic(todo("")) // inject assets/changefile.ch
 	}
 	if b, err = exec.Command(tangle, args...).CombinedOutput(); err != nil {
 		return b, err

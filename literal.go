@@ -25,8 +25,8 @@ type literal interface {
 	render() string
 }
 
-type literalNegator interface {
-	neg() literal
+type literalInvertor interface {
+	inverse() literal
 }
 
 type booleanLiteral bool
@@ -58,9 +58,9 @@ func newIntegerLiteralFromString(s string) (integerLiteral, error) {
 	return integerLiteral(n), nil
 }
 
-func (l integerLiteral) neg() literal   { return -l }
-func (l integerLiteral) render() string { return fmt.Sprint(l) }
-func (l integerLiteral) typ() typ       { return aInteger }
+func (l integerLiteral) inverse() literal { return -l }
+func (l integerLiteral) render() string   { return fmt.Sprint(l) }
+func (l integerLiteral) typ() typ         { return aInteger }
 
 type stringLiteral string
 

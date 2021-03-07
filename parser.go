@@ -46,7 +46,7 @@ var (
 				functionHeading: &functionHeading{args: []typ{aFile}},
 				typ:             aBoolean,
 			},
-			"erstat": &functionDeclaration{ //TODO changefile.ch
+			"erstat": &functionDeclaration{
 				functionHeading: &functionHeading{args: []typ{aFile}},
 				typ:             aInteger,
 			},
@@ -1155,7 +1155,7 @@ func (p *parser) not(n node, op typ) (r typ) {
 		return op
 	}
 
-	x, ok := op.(noter)
+	x, ok := op.(negator)
 	if !ok {
 		p.err(n, "invalid not operator operand type: %s", op)
 		return op
@@ -1337,7 +1337,7 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 	r.isConst = r.term.isConst
 	r.identifier = r.term.identifier
 	if sign != nil && sign.src == "-" {
-		r.typ = p.negType(c0, r.typ)
+		r.typ = p.inverse(c0, r.typ)
 	}
 	for {
 		switch p.c().ch {
@@ -1357,19 +1357,19 @@ func (p *parser) simpleExpression(s *scope) *simpleExpression {
 	}
 }
 
-func (p *parser) negType(n node, op typ) (r typ) {
+func (p *parser) inverse(n node, op typ) (r typ) {
 	if op == nil {
 		return op
 	}
 
-	x, ok := op.(negator)
+	x, ok := op.(invertor)
 	if !ok {
-		p.err(n, "negation of a wrong type: %v", op)
+		p.err(n, "additive inverse of a wrong type: %v", op)
 		return op
 	}
 
 	var err error
-	if r, err = x.neg(); err != nil {
+	if r, err = x.inverse(); err != nil {
 		p.err(n, "%s", err)
 	}
 	return r
@@ -2654,7 +2654,7 @@ func (p *parser) constant(s *scope) (r *constant) {
 			}
 
 			if neg {
-				r.literal = p.negOperand(c0, r.literal)
+				r.literal = p.inverseLiteral(c0, r.literal)
 			}
 		}
 	}()
@@ -2726,18 +2726,18 @@ func (p *parser) constant(s *scope) (r *constant) {
 	return nil
 }
 
-func (p *parser) negOperand(n node, l literal) literal {
+func (p *parser) inverseLiteral(n node, l literal) literal {
 	if l == nil || l.typ() == nil {
 		return l
 	}
 
-	x, ok := l.(literalNegator)
+	x, ok := l.(literalInvertor)
 	if !ok {
 		p.err(n, "negation of a wrong operand type: %v", l.typ())
 		return l
 	}
 
-	return x.neg()
+	return x.inverse()
 }
 
 func goStringFromPascalString(s string) string {

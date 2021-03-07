@@ -19,10 +19,9 @@ const ( // tex.pdf pg.5, §6
 )
 
 type project struct {
-	errs      []string
-	nextLabel int
-	out       io.Writer
-	task      *task
+	errs []string
+	out  io.Writer
+	task *task
 
 	closed bool
 }
@@ -31,12 +30,6 @@ func newProject(t *task) *project {
 	return &project{
 		task: t,
 	}
-}
-
-func (p *project) newLabel() int {
-	r := p.nextLabel
-	p.nextLabel++
-	return r
 }
 
 func (p *project) err(n node, msg string, args ...interface{}) {
@@ -139,7 +132,6 @@ func (p *project) block(n *block, tld bool) {
 	for _, v := range n.list {
 		p.procedureAndFunctionDeclarationPart(v)
 	}
-	p.nextLabel = 0
 	p.compoundStatement(n.compoundStatement, tld, false, true)
 }
 
@@ -576,40 +568,12 @@ func (p *project) convert(isConst bool, l literal, from, to typ) string {
 		return ""
 	}
 
-	switch f := from.(type) {
-	case *char:
-		switch t := to.(type) {
-		case *char:
-			return ""
-		default:
-			panic(todo("%v -> %v: %T", from, to, t))
-		}
+	switch from.(type) {
 	case *integer:
 		switch t := to.(type) {
-		case *integer:
-			return ""
-		case *subrange:
+		case *subrange, *real:
 			p.w("%s(", t.goType())
 			return ")"
-		case *real:
-			p.w("%s(", t.goType())
-			return ")"
-		default:
-			panic(todo("%v -> %v: %T", from, to, t))
-		}
-	case *real:
-		switch t := to.(type) {
-		case *real:
-			return ""
-		default:
-			panic(todo("%v -> %v: %T", from, to, t))
-		}
-	case *boolean:
-		switch t := to.(type) {
-		case *boolean:
-			return ""
-		default:
-			panic(todo("%v -> %v: %T", from, to, t))
 		}
 	case *array:
 		if to.canBeAssignedFrom(from) {
@@ -619,25 +583,16 @@ func (p *project) convert(isConst bool, l literal, from, to typ) string {
 			}
 			return ""
 		}
-
-		panic(todo("%v -> %v: %T", from, to, f))
 	case *subrange:
 		switch t := to.(type) {
-		case *subrange:
+		case *subrange, *integer, *real:
 			p.w("%s(", t.goType())
 			return ")"
-		case *integer:
-			p.w("%s(", t.goType())
-			return ")"
-		case *real:
-			p.w("%s(", t.goType())
-			return ")"
-		default:
-			panic(todo("%v -> %v: %T", from, to, t))
 		}
-	default:
-		panic(todo("%v -> %v: %T", from, to, f))
 	}
+
+	p.err(noder{}, "conversion not implemented: %v to %v", from, to)
+	return ""
 }
 
 func (p *project) simpleExpression(n *simpleExpression, t typ, parens bool) {

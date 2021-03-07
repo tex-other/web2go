@@ -5,7 +5,8 @@
 //TODO trip test suite
 //TODO Enlarge constants
 
-//go:generate assets -d . -re changefile.ch|rtl.go
+//go:generate cp -v rtl.go assets/
+//go:generate assets
 //go:generate stringer -output stringer.go -linecomment -type=ch
 //go:generate gofmt -l -s -w .
 
@@ -270,8 +271,11 @@ func (t *task) web2p() ([]byte, error) {
 	}
 
 	args := []string{"-underline", t.in}
-	if t.changeFile != "" {
+	switch {
+	case t.changeFile != "":
 		args = append(args, t.changeFile)
+	default:
+		panic(todo("")) // inject assets/changefile.ch
 	}
 	if b, err = exec.Command(tangle, args...).CombinedOutput(); err != nil {
 		return b, err

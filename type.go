@@ -27,8 +27,8 @@ var (
 
 	_ = []adder{aBoolean, aInteger, aReal, aSubrange}
 	_ = []multiplier{aBoolean, aInteger, aReal, aSubrange}
-	_ = []negator{aInteger, aReal, aSubrange}
-	_ = []noter{aBoolean}
+	_ = []invertor{aInteger, aReal, aSubrange}
+	_ = []negator{aBoolean}
 	_ = []ordinal{aInteger, aSubrange, aChar}
 	_ = []packer{aArray, aFile, aRecord}
 	_ = []relator{aChar, aInteger, aReal, aSubrange}
@@ -75,8 +75,8 @@ type tagger interface {
 	tag() string
 }
 
-type negator interface {
-	neg() (typ, error)
+type invertor interface {
+	inverse() (typ, error)
 }
 
 type relator interface {
@@ -103,7 +103,7 @@ type multiplier interface {
 	and(multiplier) (typ, error)
 }
 
-type noter interface {
+type negator interface {
 	not() (typ, error)
 }
 
@@ -158,12 +158,12 @@ func (t *integer) goType() string                   { return "int32" }
 func (t *integer) gt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *integer) idiv(rhs multiplier) (typ, error) { return t.checkInt(rhs.(typ)) }
 func (t *integer) in(rhs relator) (typ, error)      { return ndefOp(t) }
+func (t *integer) inverse() (typ, error)            { return t, nil }
 func (t *integer) le(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *integer) lt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *integer) mod(rhs multiplier) (typ, error)  { return t.checkInt(rhs.(typ)) }
 func (t *integer) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *integer) ne(rhs relator) (typ, error)      { return aBoolean, nil }
-func (t *integer) neg() (typ, error)                { return t, nil }
 func (t *integer) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(typ)) }
 func (t *integer) render() string                   { return t.goType() }
 func (t *integer) size() uintptr                    { return unsafe.Sizeof(int32(0)) }
@@ -222,12 +222,12 @@ func (t *real) goType() string                   { return "float32" }
 func (t *real) gt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) idiv(rhs multiplier) (typ, error) { return ndefOp(t) }
 func (t *real) in(rhs relator) (typ, error)      { return ndefOp(t) }
+func (t *real) inverse() (typ, error)            { return t, nil }
 func (t *real) le(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) lt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *real) mod(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *real) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *real) ne(rhs relator) (typ, error)      { return aBoolean, nil }
-func (t *real) neg() (typ, error)                { return t, nil }
 func (t *real) or(rhs adder) (typ, error)        { return ndefOp(t) }
 func (t *real) render() string                   { return t.goType() }
 func (t *real) size() uintptr                    { return unsafe.Sizeof(float32(0)) }
@@ -347,12 +347,12 @@ func (t *subrange) goType() string                   { return t.goNm }
 func (t *subrange) gt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *subrange) idiv(rhs multiplier) (typ, error) { return t.checkInt(rhs.(typ)) }
 func (t *subrange) in(rhs relator) (typ, error)      { return ndefOp(t) }
+func (t *subrange) inverse() (typ, error)            { return t, nil }
 func (t *subrange) le(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *subrange) lt(rhs relator) (typ, error)      { return aBoolean, nil }
 func (t *subrange) mod(rhs multiplier) (typ, error)  { return t.checkInt(rhs.(typ)) }
 func (t *subrange) mul(rhs multiplier) (typ, error)  { return t.binOp(rhs.(typ)) }
 func (t *subrange) ne(rhs relator) (typ, error)      { return aBoolean, nil }
-func (t *subrange) neg() (typ, error)                { return t, nil }
 func (t *subrange) or(rhs adder) (typ, error)        { return t.checkInt(rhs.(typ)) }
 func (t *subrange) render() string                   { return t.goType() }
 func (t *subrange) size() uintptr                    { return t.sz }

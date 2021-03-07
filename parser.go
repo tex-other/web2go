@@ -437,7 +437,7 @@ func (p *parser) statementList(s *scope) (r []*statement) {
 	for p.c().ch == ';' {
 		p.shift()
 		switch p.c().ch {
-		case UNTIL, ELSE, END:
+		case UNTIL, ELSE, END, OTHERS:
 			return r
 		}
 
@@ -597,16 +597,17 @@ func (p *parser) caseList(s *scope) (r []*case_) {
 // Case = Constant { "," Constant } ":" Statement |
 //	"else" Statement .
 type case_ struct {
-	list    []*constant
-	colon   *tok
-	elseTok *tok
+	list   []*constant
+	colon  *tok
+	others *tok
 	*statement
 }
 
 func (p *parser) case_(s *scope) *case_ {
-	if p.c().ch == ELSE {
+	if p.c().ch == OTHERS { // others: == else
 		return &case_{
-			elseTok:   p.shift(),
+			others:    p.shift(),
+			colon:     p.mustShift(':'),
 			statement: p.statement(s),
 		}
 	}

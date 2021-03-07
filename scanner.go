@@ -50,6 +50,7 @@ const (
 	NOT                             // not
 	OF                              // of
 	OR                              // or
+	OTHERS                          // others
 	PACKED                          // packed
 	PROCEDURE                       // procedure
 	PROGRAM                         // program
@@ -91,6 +92,7 @@ var keywords = map[string]ch{
 	"not":       NOT,
 	"of":        OF,
 	"or":        OR,
+	"others":    OTHERS,
 	"packed":    PACKED,
 	"procedure": PROCEDURE,
 	"program":   PROGRAM,

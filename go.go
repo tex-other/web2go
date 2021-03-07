@@ -264,7 +264,7 @@ func (p *project) caseStatement(n *caseStatement) {
 
 func (p *project) case_(n *case_) {
 	switch {
-	case n.elseTok != nil:
+	case n.others != nil:
 		p.w("\ndefault")
 	default:
 		p.w("\ncase")

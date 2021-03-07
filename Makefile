@@ -58,8 +58,8 @@ nuke: clean
 
 xtex:
 	tangle tex.web assets/changefile.ch
-	weave tex.web
 	cp tex.p ~/tmp/tex.p
+	weave tex.web
 	ptop tex.p tex.pas
 	go install -v
 	rm -rf ~/tmp/xtex.go

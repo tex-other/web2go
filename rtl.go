@@ -68,6 +68,7 @@ const (
 	stdioDev      = "TTY:"
 	texArea       = "TeXinputs:"
 	texFontArea   = "TeXfonts:"
+	texPool       = "TeXformats:TEX.POOL"
 )
 
 func origin(skip int) string {
@@ -232,7 +233,7 @@ ok:
 	switch {
 	case err != nil:
 		switch {
-		case name == "TeXformats:TEX.POOL":
+		case name == texPool:
 			f.ioFile = &ioFile{
 				eof:           false,
 				erstat:        0,
@@ -242,7 +243,18 @@ ok:
 			}
 			break ok
 		case strings.HasPrefix(name, texArea):
-			if s, ok := assets["/tex/"+name[len(texArea):]]; ok {
+			if s, ok := assets["/texinputs/"+name[len(texArea):]]; ok {
+				f.ioFile = &ioFile{
+					eof:           false,
+					erstat:        0,
+					componentSize: componentSize,
+					name:          name,
+					in:            readCloser{strings.NewReader(s)},
+				}
+				break ok
+			}
+		case strings.HasPrefix(name, texFontArea):
+			if s, ok := assets["/texfonts/"+name[len(texFontArea):]]; ok {
 				f.ioFile = &ioFile{
 					eof:           false,
 					erstat:        0,
@@ -254,7 +266,6 @@ ok:
 			}
 		}
 
-		// trc("%q", name)
 		f.ioFile = &ioFile{
 			erstat:        1,
 			componentSize: componentSize,
@@ -270,6 +281,7 @@ ok:
 			in:            g, //TODO bufio
 		}
 	}
+
 	if _, err := io.ReadFull(f.ioFile.in, f.ioFile.component[:f.ioFile.componentSize]); err != nil {
 		f.ioFile.eof = true
 		f.ioFile.erstat = 1

@@ -190,9 +190,9 @@ func (t *integer) checkInt(rhs typ) (typ, error) {
 func (t *integer) binOp(rhs typ) (typ, error) {
 	switch rhs.(type) {
 	case *integer, *subrange:
-		return t, nil
+		return aInteger, nil
 	case *real:
-		return rhs, nil
+		return aReal, nil
 	default:
 		return ndefOp(rhs)
 	}
@@ -236,7 +236,7 @@ func (t *real) sub(rhs adder) (typ, error)       { return t.binOp(rhs.(typ)) }
 func (t *real) binOp(rhs typ) (typ, error) {
 	switch rhs.(type) {
 	case *real, *integer:
-		return t, nil
+		return aReal, nil
 	default:
 		return ndefOp(t)
 	}
@@ -274,7 +274,7 @@ func (t *boolean) sub(rhs adder) (typ, error)       { return ndefOp(t) }
 func (t *boolean) binOp(rhs typ) (typ, error) {
 	switch rhs.(type) {
 	case *boolean:
-		return t, nil
+		return aBoolean, nil
 	default:
 		return ndefOp(rhs)
 	}
@@ -377,11 +377,9 @@ func (t *subrange) checkInt(rhs typ) (typ, error) {
 }
 
 func (t *subrange) binOp(rhs typ) (typ, error) {
-	switch x := rhs.(type) {
-	case *integer:
-		return x, nil
-	case *subrange:
-		return t, nil
+	switch rhs.(type) {
+	case *integer, *subrange:
+		return aInteger, nil
 	default:
 		return ndefOp(rhs)
 	}

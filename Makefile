@@ -5,7 +5,7 @@
 .PHONY:	all clean edit editor later nuke todo
 
 grep=--include=*.go
-ngrep='TODOOK\|testdata\|TODO-'
+ngrep='TODOOK\|testdata\|TODO-\|assets.*.go'
 
 
 all:
@@ -37,7 +37,7 @@ build_all_targets:
 
 clean:
 	go clean
-	rm -f *~ *.test *.out tex.p tex.pas tex.pool tex.tex *.log
+	rm -f *~ *.test *.out log log-* *.log
 
 edit:
 	@touch log
@@ -55,6 +55,7 @@ later:
 
 nuke: clean;
 	go clean -i
+	rm -f tex.p tex.pas tex.pool tex.tex tex.dvi tex.pdf parser.y y.output
 
 xtex:
 	go generate

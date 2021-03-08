@@ -392,6 +392,13 @@ func (p *project) procedureStatement(n *procedureStatement) {
 		p.w("(")
 		defer p.w(")")
 		for _, v := range n.list {
+			if v.literal != nil {
+				if x, ok := v.literal.(charLiteral); ok {
+					p.w("%q, ", string(rune(x)))
+					continue
+				}
+			}
+
 			p.arg(v)
 			p.w(", ")
 		}
@@ -444,10 +451,9 @@ func (p *project) assignmentStatement(n *assignmentStatement) {
 					return
 				}
 
-				panic(todo(""))
 			}
 
-			panic(todo(""))
+			p.err(nil, "internal error: unsupported array assignment")
 		}
 	}
 
@@ -774,17 +780,19 @@ func (p *project) unsignedNumber(n *unsignedNumber) {
 
 func (p *project) rVariable(n *variable) {
 	if n.identifier != nil {
-		switch n.identifier.tok.src {
-		case "sys_time", "sys_day", "sys_month",
-			"sys_year":
-			switch x := n.identifier.def.(type) {
-			case *variableDeclaration:
-				if x.isTLD {
-					p.w("pas%s()", capitalize(goIdent(n.identifier.src)))
-					return
+		if !p.task.trip {
+			switch n.identifier.tok.src {
+			case "sys_time", "sys_day", "sys_month", "sys_year":
+				switch x := n.identifier.def.(type) {
+				case *variableDeclaration:
+					if x.isTLD {
+						p.w("pas%s()", capitalize(goIdent(n.identifier.src)))
+						return
+					}
 				}
 			}
 		}
+
 		p.identifier(n.identifier)
 		return
 	}

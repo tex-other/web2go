@@ -4,8 +4,8 @@
 @d tats==@t@>@} {change this to `$\\{tats}\equiv\null$' when gathering
   usage statistics}
 @y
-@d stat==
-@d tats==
+@d stat== 
+@d tats== 
 @z
 
 @x 390

@@ -127,7 +127,7 @@ func (err pasError) Error() string { return fmt.Sprintf("%T(%[1]d)", err) }
 
 func pasJumpOut() { panic(pasEndOfTeX) }
 
-func abs(n float32) float32       { return float32(math.Abs(float64(n))) } //TODO check the Pascal definition.
+func abs(n float32) float32       { return float32(math.Abs(float64(n))) }
 func chr(i int32) byte            { return byte(i) }
 func odd(i int32) bool            { return i&1 != 0 }
 func pasSysDay() int32            { return int32(time.Now().Day()) }
@@ -136,7 +136,6 @@ func pasSysTime() int32           { return int32(time.Now().Hour()*60 + time.Now
 func pasSysYear() int32           { return int32(time.Now().Year()) }
 func read(args ...interface{})    { args[0].(*pasFile).read(args[1:], false) }
 func readLn(args ...interface{})  { args[0].(*pasFile).read(args[1:], true) }
-func round(n float32) int32       { return int32(math.Round(float64(n))) } //TODO check the Pascal definition.
 func write(args ...interface{})   { args[0].(*pasFile).write(args[1:], false) }
 func writeLn(args ...interface{}) { args[0].(*pasFile).write(args[1:], true) }
 
@@ -150,6 +149,19 @@ func iabs(n int32) int32 {
 	}
 
 	return -n
+}
+
+// [0] page 193
+//
+// round (r) yields a value such that if r >= 0 then round (r) =
+// trunc(r + 0.5), and if r < 0 then round(r) =
+// trunc (r - 0.5). It is an error if no such value exists.
+func round(r float32) int32 {
+	if r >= 0 {
+		return int32(r + 0.5)
+	}
+
+	return int32(r - 0.5)
 }
 
 func setString(dst []byte, src string) {
@@ -225,7 +237,7 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 			return
 		}
 
-		panic(todo(""))
+		panic(todo("")) //TODO -lib
 	}
 
 	g, err := os.Open(name)
@@ -313,12 +325,19 @@ func rewrite(f *pasFile, componentSize int, name, mode string) {
 			}
 			return
 		}
-		panic(todo(""))
+
+		panic(todo("")) // -lib
 	}
 
 	g, err := os.Create(name)
 	if err != nil {
-		panic(todo("", name, mode))
+		f.ioFile = &ioFile{
+			eof:           false,
+			erstat:        1,
+			componentSize: componentSize,
+			name:          name,
+		}
+		return
 	}
 
 	f.ioFile = &ioFile{
@@ -380,8 +399,8 @@ func (f *ioFile) read(args []interface{}, nl bool) {
 	for len(args) != 0 {
 		arg := args[0]
 		args = args[1:]
-		if w, ok := getWidth(&args); ok {
-			panic(todo("", w))
+		if _, ok := getWidth(&args); ok {
+			panic("internal error: read field width specifier not supported")
 		}
 
 		switch x := arg.(type) {
@@ -422,8 +441,9 @@ func (f *ioFile) write(args []interface{}, nl bool) {
 	for len(args) != 0 {
 		arg := args[0]
 		args = args[1:]
-		if w, ok := getWidth(&args); ok {
-			panic(todo("", w))
+		w, ok := getWidth(&args)
+		if _, ok2 := getWidth(&args); ok2 {
+			panic("internal error: write fraction field width specifier not supported")
 		}
 
 		var err error
@@ -431,8 +451,34 @@ func (f *ioFile) write(args []interface{}, nl bool) {
 		case string:
 			_, err = f.out.Write([]byte(x))
 		case byte:
+			if ok {
+				_, err = fmt.Fprintf(f.out, "%*d", w, x)
+				break
+			}
+
 			f.component[0] = x
 			f.put()
+		case int32:
+			if ok {
+				_, err = fmt.Fprintf(f.out, "%*d", w, x)
+				break
+			}
+
+			_, err = fmt.Fprint(f.out, x)
+		case int:
+			if ok {
+				_, err = fmt.Fprintf(f.out, "%*d", w, x)
+				break
+			}
+
+			_, err = fmt.Fprint(f.out, x)
+		case uint16:
+			if ok {
+				_, err = fmt.Fprintf(f.out, "%*d", w, x)
+				break
+			}
+
+			_, err = fmt.Fprint(f.out, x)
 		default:
 			panic(fmt.Errorf("unsupported write variable type: %T (%q)", x, f.name))
 		}

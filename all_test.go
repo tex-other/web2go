@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -17,7 +18,9 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pmezard/go-difflib/difflib"
 	"modernc.org/ccgo/v3/lib"
 )
 
@@ -200,74 +203,73 @@ func TestTrip(t *testing.T) {
 	// that you have working programs TFtoPL, PLtoTF, DVItype, as described in the
 	// TEXware report.
 
-	var tftopl, pltotf, dvitype string
 	for _, v := range []string{
 		"trip.tex",
 		"trip.pl",
-		"tripin.log",
-		"trip.log",
-		"trip.typ",
-		"trip.fot",
 	} {
 		if _, err := ccgo.CopyFile(filepath.Join(tempDir, v), filepath.Join("trip", v), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if tftopl, err = exec.LookPath("tftopl"); err != nil {
+
+	testDir, err := ccgo.AbsCwd()
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if pltotf, err = exec.LookPath("pltotf"); err != nil {
+	if err := ccgo.InDir(tempDir, func() error { return testTrip(testDir, tempDir) }); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	if dvitype, err = exec.LookPath("dvitype"); err != nil {
-		t.Fatal(err)
-	}
-
+func testTrip(testDir, tempDir string) error {
 	// 1. Use PLtoTF to convert TRIP.PL into TRIP.TFM. Then use TFtoPL to convert
 	// TRIP.TFM into TMP.PL.  Check that TMP.PL is identical to TRIP.PL (this is a
 	// partial test of PLtoTF and TFtoPL). Install TRIP.TFM in the standard file
 	// area for TEX font metric files.
-	if _, err := ccgo.Shell(
-		pltotf,
-		filepath.Join(tempDir, "trip.pl"),
-		filepath.Join(tempDir, "trip.tfm"),
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ccgo.Shell(
-		tftopl,
-		filepath.Join(tempDir, "trip.tfm"),
-		filepath.Join(tempDir, "tmp.pl"),
-	); err != nil {
-		t.Fatal(err)
+
+	pltotf, err := exec.LookPath("pltotf")
+	if err != nil {
+		return err
 	}
 
-	g, err := ioutil.ReadFile(filepath.Join(tempDir, "tmp.pl"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := ccgo.Shell(pltotf, "trip.pl", "trip.tfm"); err != nil {
+		return err
 	}
 
-	e, err := ioutil.ReadFile(filepath.Join(tempDir, "trip.pl"))
+	tftopl, err := exec.LookPath("tftopl")
 	if err != nil {
-		t.Fatal(err)
+		return err
+	}
+
+	if _, err := ccgo.Shell(tftopl, "trip.tfm", "tmp.pl"); err != nil {
+		return err
+	}
+
+	g, err := ioutil.ReadFile("tmp.pl")
+	if err != nil {
+		return err
+	}
+
+	e, err := ioutil.ReadFile("trip.pl")
+	if err != nil {
+		return err
 	}
 
 	if !bytes.Equal(g, e) {
-		t.Fatal("tmp.pl does not equal trip.pl")
+		return fmt.Errorf("tmp.pl does not equal trip.pl")
 	}
 
-	if g, err = ioutil.ReadFile(filepath.Join(tempDir, "trip.tfm")); err != nil {
-		t.Fatal(err)
+	if g, err = ioutil.ReadFile("trip.tfm"); err != nil {
+		return err
 	}
 
-	if e, err = ioutil.ReadFile(filepath.Join("assets", "texfonts", "trip.tfm")); err != nil {
-		t.Fatal(err)
+	if e, err = ioutil.ReadFile(filepath.Join(testDir, "assets", "texfonts", "trip.tfm")); err != nil {
+		return err
 	}
 
 	if !bytes.Equal(g, e) {
-		t.Fatal("trip.tfm does not equal the installed one")
+		return fmt.Errorf("trip.tfm does not equal the installed one")
 	}
 
 	// 2. Prepare a special version of INITEX. (This means that your WEB change
@@ -283,33 +285,18 @@ func TestTrip(t *testing.T) {
 	// of the test output. Your test version should not change the default
 	// definition of unprintable characters (§49 of the program).
 
-	task := newTask([]string{"test-trip"})
-	task.tempDir = tempDir
-	task.in = "tex.web"
-	task.changeFile = "trip.ch"
-	task.o = filepath.Join(tempDir, "tex.go")
-	task.p = filepath.Join(task.tempDir, "tex.p")
-	if b, err := task.web2p(); err != nil {
-		t.Fatalf("%s\n%v", b, err)
-	}
-
-	b, err := ioutil.ReadFile(task.p)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	program, err := parse(task, b, "tex.p")
-	if err != nil {
-		t.Fatalf("could not parse: %+v", err)
-	}
-
-	if program == nil {
-		t.Fatal("empty result but no error")
-	}
-
-	project := newProject(task)
-	if err = project.main(program); err != nil {
-		t.Fatal(err)
+	if err := ccgo.InDir(testDir, func() error {
+		task := newTask([]string{"test-trip"})
+		task.tempDir = tempDir
+		task.in = "tex.web"
+		task.pkgName = "main"
+		task.changeFile = filepath.Join("trip", "trip.ch")
+		task.o = filepath.Join(tempDir, "tex.go")
+		task.p = filepath.Join(task.tempDir, "tex.p")
+		task.trip = true
+		return task.main()
+	}); err != nil {
+		return err
 	}
 
 	// 3. Run the INITEX prepared in step 2. In response to the first ‘**’ prompt,
@@ -317,28 +304,327 @@ func TestTrip(t *testing.T) {
 	// You should get an output that matches the file TRIPIN.LOG (Appendix D).
 	// Don’t be alarmed by the error messages that you see, unless they are
 	// different from those in Appendix D.
+
 	cmd := exec.Command("go", "run", filepath.Join(tempDir, "tex.go"))
-	stdin, err := cmd.StdinPipe() // writer
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
-	stdout, err := cmd.StdoutPipe() // reader
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	stderr, err := cmd.StderrPipe() // reader
-	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		return err
 	}
 
-	_ = stdin
-	_ = stdout
-	_ = stderr
-	_ = dvitype
+	rx := func(n int, timeout time.Duration, r io.Reader) (string, error) {
+		ta := time.After(timeout)
+		ch := make(chan error)
+		b := make([]byte, n)
+		go func() {
+			_, err := io.ReadFull(r, b)
+			ch <- err
+		}()
+
+		select {
+		case err := <-ch:
+			if err != nil {
+				return "", err
+			}
+
+			return string(b), nil
+		case <-ta:
+			return "", fmt.Errorf("rx: timeout")
+		}
+	}
+
+	rxLine := func(timeout time.Duration, r io.Reader) (string, error) {
+		ta := time.After(timeout)
+		var b strings.Builder
+		for {
+			s, err := rx(1, timeout, r)
+			if err != nil {
+				return "", err
+			}
+
+			if s == "\n" {
+				return b.String(), nil
+			}
+
+			select {
+			case <-ta:
+				return b.String(), fmt.Errorf("rxLine: timeout")
+			default:
+				b.WriteString(s)
+			}
+
+		}
+	}
+
+	// "This is TeX, Version 3.141592653 (INITEX)"
+	if _, err := rxLine(time.Second, stdout); err != nil {
+		return err
+	}
+
+	prompt, err := rx(2, time.Second, stdout)
+	if err != nil {
+		return err
+	}
+
+	if g, e := prompt, "**"; g != e {
+		return fmt.Errorf("got %q, expected %q", g, e)
+	}
+
+	if _, err = stdin.Write([]byte{'\n'}); err != nil {
+		return err
+	}
+
+	// "Please type the name of your input file."
+	if _, err = rxLine(time.Second, stdout); err != nil {
+		return err
+	}
+
+	if prompt, err = rx(2, time.Second, stdout); err != nil {
+		return err
+	}
+
+	if g, e := prompt, "**"; g != e {
+		return fmt.Errorf("got %q, expected %q", g, e)
+	}
+
+	input := "\\input trip"
+	if _, err = stdin.Write([]byte(input + "\n")); err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			if _, err = rxLine(time.Second, stdout); err != nil {
+				break
+			}
+		}
+	}()
+
+	if err = cmd.Wait(); err != nil {
+		return err
+	}
+
+	got, err := ioutil.ReadFile("trip.log")
+	if err != nil {
+		return err
+	}
+
+	exp, err := ioutil.ReadFile(filepath.Join(testDir, "trip", "tripin.log"))
+	if err != nil {
+		return err
+	}
+
+	if !bytes.Equal(got, exp) {
+		diff := difflib.UnifiedDiff{
+			A:        difflib.SplitLines(string(exp)),
+			B:        difflib.SplitLines(string(got)),
+			FromFile: filepath.Join(testDir, "trip", "tripin.log"),
+			ToFile:   filepath.Join(tempDir, "trip.log"),
+			Context:  3,
+		}
+		text, _ := difflib.GetUnifiedDiffString(diff)
+		return fmt.Errorf("\n%s", text)
+	}
+
+	// 4. Run INITEX again. This time type ‘ &trip trip ’. (The spaces in this
+	// input help to check certain parts of TEX that aren’t otherwise used.) You
+	// should get outputs TRIP.LOG, TRIP.DVI, and TRIPOS.TEX; there will also be an
+	// empty file 8TERMINAL.TEX. Furthermore, your terminal should receive output
+	// that matches TRIP.FOT (Appendix H). During the middle part of this test,
+	// however, the terminal will not be getting output, because \batchmode is
+	// being tested; don’t worry if nothing seems to be happening for a
+	// while—nothing is supposed to.
+
+	if err = os.Remove("trip.log"); err != nil {
+		return err
+	}
+
+	cmd = exec.Command("go", "run", filepath.Join(tempDir, "tex.go"))
+	if stdin, err = cmd.StdinPipe(); err != nil {
+		return err
+	}
+
+	cmd.Stdin = bytes.NewBuffer([]byte(" &trip  trip \n"))
+	if got, err = cmd.Output(); err != nil {
+		return err
+	}
+
+	for _, v := range []string{
+		"trip.log",
+		"trip.dvi",
+		"tripos.tex",
+		"8terminal.tex",
+	} {
+		_, err := os.Stat(v)
+		if err != nil {
+			return fmt.Errorf("output file missing: %v", v)
+		}
+	}
+
+	x := bytes.Index(got, []byte("(trip.tex ##"))
+	got = got[x:]
+	got = bytes.TrimSpace(got)
+	if exp, err = ioutil.ReadFile(filepath.Join(testDir, "trip", "trip.fot")); err != nil {
+		return err
+	}
+
+	x = bytes.Index(exp, []byte("(trip.tex ##"))
+	exp = exp[x:]
+	exp = bytes.TrimSpace(exp)
+	if !bytes.Equal(got, exp) {
+		diff := difflib.UnifiedDiff{
+			A:        difflib.SplitLines(string(exp)),
+			B:        difflib.SplitLines(string(got)),
+			FromFile: filepath.Join(testDir, "trip", "trip.fot"),
+			ToFile:   "terminal output",
+			Context:  0,
+		}
+		text, _ := difflib.GetUnifiedDiffString(diff)
+		return fmt.Errorf("\n%s", text)
+	}
+
+	// 5. Compare the TRIP.LOG file from step 4 with the “master” TRIP.LOG file of
+	// step 0. (Let’s hope you put that master file in a safe place so that it
+	// wouldn’t be clobbered.) There should be perfect agreement between these
+	// files except in the following respects:
+	//
+	// a) The dates and possibly the file names will naturally be different.
+	//
+	// b) Glue settings in the displays of TEX boxes are subject to
+	// system-dependent rounding, so slight deviations are permissible. However,
+	// such deviations apply only to the ‘glue set’ values that appear at the end
+	// of an \hbox or \vbox line; all other numbers should agree exactly, since
+	// they are computed with integer arithmetic in a prescribed system-independent
+	// manner.
+	//
+	// c) The amount of space in kerns that are marked “for accent” are, similarly,
+	// subject to system- dependent rounding.
+	//
+	// d) If you had different values for stack size , buf size , etc., the
+	// corresponding capacity values will be different when they are printed out at
+	// the end.
+	//
+	// e) Help messages may be different; indeed, the author encourages non-English
+	// help messages in versions of TEX for people who don’t understand English as
+	// well as some other language.
+	//
+	// f) The total number and length of strings at the end may well be different.
+	//
+	// g) If your TEX uses a different memory allocation or packing scheme or DVI
+	// output logic, the memory usage statistics may change.
+
+	if got, err = ioutil.ReadFile("trip.log"); err != nil {
+		return err
+	}
+
+	// b)
+	// @@ -4796 +4796 @@
+	// -..\hbox(8.0+2.0)x0.0, glue set 177.80537fil
+	// +..\hbox(8.0+2.0)x0.0, glue set 177.80539fil
+	got = bytes.Replace(
+		got,
+		[]byte("\\hbox(8.0+2.0)x0.0, glue set 177.80539fil"),
+		[]byte("\\hbox(8.0+2.0)x0.0, glue set 177.80537fil"),
+		1,
+	)
+	if exp, err = ioutil.ReadFile(filepath.Join(testDir, "trip", "trip.log")); err != nil {
+		return err
+	}
+
+	if !bytes.Equal(got, exp) {
+		diff := difflib.UnifiedDiff{
+			A:        difflib.SplitLines(string(exp)),
+			B:        difflib.SplitLines(string(got)),
+			FromFile: filepath.Join(testDir, "trip", "trip.log"),
+			ToFile:   filepath.Join(tempDir, "trip.log"),
+			Context:  0,
+		}
+		text, _ := difflib.GetUnifiedDiffString(diff)
+		return fmt.Errorf("\n%s", text)
+	}
+
+	// 6. Use DVItype to convert your file TRIP.DVI to a file TRIP.TYP. The
+	// following options should be set when using DVItype:
+	//
+	// 	Output level = 2
+	// 	Starting page = *.*.*.*.*.*.*.*.*.*
+	// 	Number of pages = 1000000	(this is the default)
+	// 	Resolution = 7227/100		(this is one point per pixel)
+	// 	New magnification = 0		(this is the default)
+	//
+	// The resulting file should agree with the master TRIP.TYP file of step 0,
+	// except that some of the values might be a little off due to floating-point
+	// rounding discrepancies. Furthermore there may be differences between ‘right
+	// ’ and ‘w ’ and ‘x ’ commands, and between ‘down ’ and ‘y ’ and ‘z ’; the key
+	// thing is that all characters and rules and xxx ’s should be in almost the
+	// same positions as specified in Appendix F. (If your DVI-writing routines
+	// differ substantially from those in TEX.WEB, you may want to write a
+	// DVIcompare program that detects any substantive differences between two
+	// given DVI files. Such a routine would be of general use besides. On the
+	// other hand, if you have set dvi buf size to 800, then your DVI file should
+	// be virtually identical to the one supplied.)
+
+	dvitype, err := exec.LookPath("dvitype")
+	if err != nil {
+		return err
+	}
+
+	if got, err = exec.Command(
+		dvitype,
+		"-output-level=2",
+		"-page-start=*.*.*.*.*.*.*.*.*.*",
+		"-max-pages=1000000",
+		"-dpi=72.27",
+		"-magnification=0",
+		"trip.dvi",
+	).Output(); err != nil {
+		return err
+	}
+
+	if exp, err = ioutil.ReadFile(filepath.Join(testDir, "trip", "trip.typ")); err != nil {
+		return err
+	}
+
+	// @@ -1 +1 @@
+	// -This is DVItype, Version 3.6
+	// +This is DVItype, Version 3.6 (TeX Live 2019/dev/Debian)
+	x = bytes.IndexByte(got, '\n')
+	got = got[x+1:]
+	x = bytes.IndexByte(exp, '\n')
+	exp = exp[x+1:]
+
+	// @@ -1065 +1065 @@
+	// -2458: right4 12176941
+	// +2458: right4 12176942
+	got = bytes.Replace(got, []byte("2458: right4 12176942"), []byte("2458: right4 12176941"), 1)
+	if !bytes.Equal(got, exp) {
+		diff := difflib.UnifiedDiff{
+			A:        difflib.SplitLines(string(exp)),
+			B:        difflib.SplitLines(string(got)),
+			FromFile: filepath.Join(testDir, "trip", "trip.typ"),
+			ToFile:   "dvitype output",
+			Context:  0,
+		}
+		text, _ := difflib.GetUnifiedDiffString(diff)
+		return fmt.Errorf("\n%s", text)
+	}
+
+	// 7. You might also wish to test TRIP with other versions of TEX (i.e., VIRTEX
+	// or a production version with other fonts and macros preloaded). It should
+	// work unless TEX’s primitives have been redefined.  However, this step isn’t
+	// essential, since all the code of VIRTEX appears in INITEX; you probably
+	// won’t catch any more errors this way, unless they would already become
+	// obvious from normal use of the system.
+
+	// Nothing to do here.
+
+	return nil
 }

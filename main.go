@@ -74,7 +74,7 @@
 //
 //	-lib
 //
-// Produce a library instead of a command.
+// Produce a library instead of a command. (Not yet fully implemented.)
 //
 //	-e
 //
@@ -206,6 +206,7 @@ type task struct {
 	e     bool // -e
 	lib   bool // -lib
 	stack bool // -stack
+	trip  bool
 }
 
 func newTask(args []string) *task {
@@ -290,6 +291,12 @@ func (t *task) web2p() ([]byte, error) {
 			return b, fmt.Errorf("could not write tangled output file %q: %w", t.p, err)
 		}
 	}
+	pool, err := ioutil.ReadFile("tex.pool")
+	if err != nil {
+		return nil, fmt.Errorf("could not read tangled output file %q: %w", "tex.pool", err)
+	}
+
+	assets["/texinputs/tex.pool"] = string(pool)
 
 	return b, nil
 }

@@ -78,7 +78,7 @@
 //
 //	-type name
 //
-// When producing a library wiht -lib, set the library type to name. (Default
+// When producing a library with -lib, set the library type to name. (Default
 // "tex".)
 //
 //	-e

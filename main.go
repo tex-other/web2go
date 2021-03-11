@@ -74,7 +74,12 @@
 //
 //	-lib
 //
-// Produce a library instead of a command. (Not yet fully implemented.)
+// Produce a library instead of a command.
+//
+//	-type name
+//
+// When producing a library wiht -lib, set the library type to name. (Default
+// "tex".)
 //
 //	-e
 //
@@ -159,6 +164,7 @@ func main() {
 	flag.StringVar(&task.o, "o", "", ".go output file")
 	flag.StringVar(&task.p, "p", "", ".p output file")
 	flag.StringVar(&task.pkgName, "pkg", "tex", "name the output package, used only with -lib")
+	flag.StringVar(&task.libTypeName, "type", "tex", "name lib type, used only with -lib")
 	flag.Parse()
 	if flag.NArg() == 0 {
 		fatal(task.stack, "missing input file argument")
@@ -190,18 +196,18 @@ func main() {
 }
 
 type task struct {
-	args         []string
-	changeFile   string
-	cleanup      []func()
-	copyright    []string
-	in           string // tex.web, for example
-	o            string // -o
-	p            string // -p
-	pkg          string // -pkg
-	pkgName      string
-	progTypeName string
-	rcvrName     string
-	tempDir      string
+	args        []string
+	changeFile  string
+	cleanup     []func()
+	copyright   []string
+	in          string // tex.web, for example
+	o           string // -o
+	p           string // -p
+	pkg         string // -pkg
+	pkgName     string
+	libTypeName string
+	rcvrName    string
+	tempDir     string
 
 	e     bool // -e
 	lib   bool // -lib
@@ -211,10 +217,10 @@ type task struct {
 
 func newTask(args []string) *task {
 	return &task{
-		args:         args,
-		pkgName:      "tex",
-		progTypeName: "tex",
-		rcvrName:     "tex",
+		args:        args,
+		pkgName:     "tex",
+		libTypeName: "tex",
+		rcvrName:    "tex",
 	}
 }
 

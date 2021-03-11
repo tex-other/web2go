@@ -1186,7 +1186,7 @@ func (p *parser) functionDesignator(s *scope) *functionDesignator {
 		// handled in p.identifier
 	case *functionDeclaration:
 		r.typ = x.typ
-		args = x.functionHeading.args //TODO-
+		args = x.functionHeading.args
 		r.args = x.functionHeading.args
 	default:
 		p.err(c0, "not a function: %s", r.identifier.src)

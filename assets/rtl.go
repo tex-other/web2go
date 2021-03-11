@@ -49,6 +49,16 @@ type memoryWord struct {
 	variant float32
 }
 
+type LIBTYPE struct {
+	stdin  io.ReadCloser
+	stdout io.WriteCloser
+}
+
+// code bellow goes into the produced Go file. It's here to verify it compiles and
+// it also allows to eventually have some tests of it.
+
+// The word LIBTYPE will be replaced by the argument of -type (default "tex").
+
 /* CUT HERE */
 
 var (
@@ -193,18 +203,18 @@ func (f *pasFile) pMemoryWord() *memoryWord {
 	return (*memoryWord)(unsafe.Pointer(&f.component))
 }
 
-func break1(f *pasFile)                      { /* nop */ }
-func breakIn(f *pasFile, b bool)             { /* nop */ }
-func close(f *pasFile)                       { f.close() }
-func eof(f *pasFile) bool                    { return f.ioFile.eof }
-func eoln(f *pasFile) bool                   { return f.ioFile.eoln() }
-func erstat(f *pasFile) int32                { return f.erstat }
-func get(f *pasFile)                         { f.get() }
-func put(f *pasFile)                         { f.put() }
-func reset1(f *pasFile, name, mode string)   { reset(f, 1, name, mode) }
-func reset4(f *pasFile, name, mode string)   { reset(f, 4, name, mode) }
-func rewrite1(f *pasFile, name, mode string) { rewrite(f, 1, name, mode) }
-func rewrite4(f *pasFile, name, mode string) { rewrite(f, 4, name, mode) }
+func break1(f *pasFile)                                  { /* nop */ }
+func breakIn(f *pasFile, b bool)                         { /* nop */ }
+func close(f *pasFile)                                   { f.close() }
+func eof(f *pasFile) bool                                { return f.ioFile.eof }
+func eoln(f *pasFile) bool                               { return f.ioFile.eoln() }
+func erstat(f *pasFile) int32                            { return f.erstat }
+func get(f *pasFile)                                     { f.get() }
+func put(f *pasFile)                                     { f.put() }
+func reset1(t *LIBTYPE, f *pasFile, name, mode string)   { reset(t, f, 1, name, mode) }
+func reset4(t *LIBTYPE, f *pasFile, name, mode string)   { reset(t, f, 4, name, mode) }
+func rewrite1(t *LIBTYPE, f *pasFile, name, mode string) { rewrite(t, f, 1, name, mode) }
+func rewrite4(t *LIBTYPE, f *pasFile, name, mode string) { rewrite(t, f, 4, name, mode) }
 
 type readCloser struct {
 	io.Reader
@@ -217,7 +227,7 @@ func (r readCloser) Close() error { return nil }
 // Reset (F) initiates inspection (reading) of F by placing the file at its
 // beginning. If F is not empty, the value of the first component of F is
 // assigned to F and eof (F) becomes false.
-func reset(f *pasFile, componentSize int, name, mode string) {
+func reset(t *LIBTYPE, f *pasFile, componentSize int, name, mode string) {
 	name = strings.TrimRight(name, " ")
 	if !strings.Contains(mode, modeNoIOPanic) {
 		panic(fmt.Errorf("unsupported file mode: %q (%q)", mode, name))
@@ -237,7 +247,14 @@ func reset(f *pasFile, componentSize int, name, mode string) {
 			return
 		}
 
-		panic(todo("")) //TODO -lib
+		f.ioFile = &ioFile{
+			eof:           false,
+			erstat:        0,
+			componentSize: componentSize,
+			name:          os.Stdin.Name(),
+			in:            t.stdin,
+		}
+		return
 	}
 
 	g, err := os.Open(name)
@@ -306,7 +323,7 @@ ok:
 // Rewrite (F) initiates generation (writing) of the file F. The current value
 // of F is replaced with the empty file. Eof(F) becomes true, and a new file
 // may be written.
-func rewrite(f *pasFile, componentSize int, name, mode string) {
+func rewrite(t *LIBTYPE, f *pasFile, componentSize int, name, mode string) {
 	name = strings.TrimRight(name, " ")
 	if !strings.Contains(mode, modeNoIOPanic) {
 		panic(fmt.Errorf("unsupported file mode: %q", mode))
@@ -326,7 +343,14 @@ func rewrite(f *pasFile, componentSize int, name, mode string) {
 			return
 		}
 
-		panic(todo("")) // -lib
+		f.ioFile = &ioFile{
+			eof:           true,
+			erstat:        0,
+			componentSize: componentSize,
+			name:          os.Stdout.Name(),
+			out:           t.stdout,
+		}
+		return
 	}
 
 	g, err := os.Create(name)

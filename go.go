@@ -127,10 +127,19 @@ import (
 		}
 	}
 	p.w("\n}")
+	if !p.task.lib {
+		p.w(`
+	
+// This is needed to make the command mode compile, not used when isMain is true.
+type %s struct{
+	stdin io.ReadCloser
+	stdout io.WriteCloser
+}`, p.task.libTypeName)
+	}
 	rtl := assets["/rtl.go"]
 	const tag = "/* CUT HERE */"
 	rtl = rtl[strings.Index(rtl, tag)+len(tag):]
-	rtl = strings.ReplaceAll(rtl, "TYPE", "tex")
+	rtl = strings.ReplaceAll(rtl, "LIBTYPE", p.task.libTypeName)
 	p.w("\n\n// Run time library\n\n%s", rtl)
 	return
 }
@@ -149,7 +158,7 @@ func (p *project) compoundStatement(n *compoundStatement, tld, braces, braced bo
 	if tld {
 		switch {
 		case p.task.lib:
-			p.w("\n\nfunc (%s *%s) main() {", p.task.rcvrName, p.task.progTypeName)
+			p.w("\n\nfunc (%s *%s) main() {", p.task.rcvrName, p.task.libTypeName)
 		default:
 			p.w(`
 
@@ -408,6 +417,14 @@ func (p *project) procedureStatement(n *procedureStatement) {
 			p.w("%d", n.list[0].typ.(*file).component.size())
 		}
 		p.w("(")
+		if def.isResetOrRewrite {
+			switch {
+			case p.task.lib:
+				p.w("%s, ", p.task.rcvrName)
+			default:
+				p.w("nil, ")
+			}
+		}
 		defer p.w(")")
 		args := def.procedureHeading.args
 		for i, v := range n.list {
@@ -704,9 +721,9 @@ func (p *project) term(n *term, t typ) {
 		case '*':
 			p.w(" * ")
 		case '/':
-			p.w(" / ") //TODO adjust per operand types
+			p.w(" / ") //DONE adjust per operand types
 		case DIV:
-			p.w(" / ") //TODO adjust per operand types
+			p.w(" / ") //DONE adjust per operand types
 		case MOD:
 			p.w(" %% ")
 		case AND:
@@ -866,7 +883,7 @@ func (p *project) functionDeclaration(n *functionDeclaration) {
 
 	switch {
 	case p.task.lib:
-		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, goIdent(n.functionHeading.ident.src))
+		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.libTypeName, goIdent(n.functionHeading.ident.src))
 	default:
 		p.w("\n\nfunc %s(", goIdent(n.functionHeading.ident.src))
 	}
@@ -907,7 +924,7 @@ func (p *project) procedureDeclaration(n *procedureDeclaration) {
 
 	switch {
 	case p.task.lib:
-		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.progTypeName, goIdent(n.procedureHeading.ident.src))
+		p.w("\n\nfunc (%s *%s) %s(", p.task.rcvrName, p.task.libTypeName, goIdent(n.procedureHeading.ident.src))
 	default:
 		p.w("\n\nfunc %s(", goIdent(n.procedureHeading.ident.src))
 	}
@@ -926,7 +943,11 @@ func (p *project) variableDeclarationPart(n *variableDeclarationPart, tld bool) 
 		if tld {
 			switch {
 			case p.task.lib:
-				p.w("\n\ntype %s struct{", p.task.progTypeName)
+				p.w(`
+
+type %s struct{
+	stdin io.ReadCloser
+	stdout io.WriteCloser`, p.task.libTypeName)
 				defer p.w("\n}")
 			default:
 				p.w("\n\nvar (")

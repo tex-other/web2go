@@ -1505,6 +1505,10 @@ func (p *parser) componentVariable(s *scope, v *variable) *componentVariable {
 		return r
 	case '.':
 		r := &componentVariable{fieldDesignator: p.fieldDesignator(v)}
+		if r.fieldDesignator == nil {
+			return r
+		}
+
 		r.typ = r.fieldDesignator.typ
 		r.field = r.fieldDesignator.field
 		return r

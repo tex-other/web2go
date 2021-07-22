@@ -364,12 +364,14 @@ func testTrip(testDir, tempDir string) error {
 		}
 	}
 
+	const maxWait = 25 * time.Second
+
 	// "This is TeX, Version 3.141592653 (INITEX)"
-	if _, err := rxLine(5*time.Second, stdout); err != nil {
+	if _, err := rxLine(maxWait, stdout); err != nil {
 		return err
 	}
 
-	prompt, err := rx(2, 5*time.Second, stdout)
+	prompt, err := rx(2, maxWait, stdout)
 	if err != nil {
 		return err
 	}
@@ -383,11 +385,11 @@ func testTrip(testDir, tempDir string) error {
 	}
 
 	// "Please type the name of your input file."
-	if _, err = rxLine(5*time.Second, stdout); err != nil {
+	if _, err = rxLine(maxWait, stdout); err != nil {
 		return err
 	}
 
-	if prompt, err = rx(2, 5*time.Second, stdout); err != nil {
+	if prompt, err = rx(2, maxWait, stdout); err != nil {
 		return err
 	}
 
@@ -402,7 +404,7 @@ func testTrip(testDir, tempDir string) error {
 
 	go func() {
 		for {
-			if _, err = rxLine(5*time.Second, stdout); err != nil {
+			if _, err = rxLine(maxWait, stdout); err != nil {
 				break
 			}
 		}

@@ -158,6 +158,7 @@ func fatal(stack bool, args ...interface{}) {
 
 func main() {
 	task := newTask(os.Args)
+	flag.BoolVar(&task.trce, "trce", false, "trace errors as they happen")
 	flag.BoolVar(&task.e, "e", false, "show all errors")
 	flag.BoolVar(&task.lib, "lib", false, "produce an importable package instead of a command")
 	flag.BoolVar(&task.stack, "stack", false, "show dying stack traces")
@@ -212,6 +213,7 @@ type task struct {
 	e     bool // -e
 	lib   bool // -lib
 	stack bool // -stack
+	trce  bool // -trce
 	trip  bool
 }
 

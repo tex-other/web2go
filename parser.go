@@ -7,6 +7,7 @@ package main // import "modernc.org/web2go"
 import (
 	"fmt"
 	"go/token"
+	"os"
 	"runtime"
 	"strings"
 
@@ -151,6 +152,9 @@ func (p *parser) err(n node, msg string, args ...interface{}) {
 	msg = fmt.Sprintf(pos+msg, args...)
 	if strings.Contains(msg, "internal error") {
 		msg += fmt.Sprintf(" (%v)", origin(2))
+	}
+	if p.task.trce {
+		fmt.Fprintf(os.Stderr, "%v (%v)\n", msg, origin(2))
 	}
 	p.errs = append(p.errs, msg)
 }

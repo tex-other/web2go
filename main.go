@@ -297,9 +297,10 @@ func (t *task) web2p() ([]byte, error) {
 			return b, fmt.Errorf("could not write tangled output file %q: %w", t.p, err)
 		}
 	}
-	pool, err := ioutil.ReadFile("tex.pool")
+	nm := t.in[:len(t.in)-len(filepath.Ext(t.in))] + ".pool"
+	pool, err := ioutil.ReadFile(nm)
 	if err != nil {
-		return nil, fmt.Errorf("could not read tangled output file %q: %w", "tex.pool", err)
+		return nil, fmt.Errorf("could not read tangled output file %q: %w", nm, err)
 	}
 
 	assets["/texinputs/tex.pool"] = string(pool)
